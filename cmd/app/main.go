@@ -61,9 +61,7 @@ func main() {
 	logger.Println("server stopped")
 }
 
+// env returns the value of the environment variable or empty string if not set.
 func env(key string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return ""
+	return os.Getenv(key)
 }
