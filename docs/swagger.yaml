@@ -1,0 +1,23 @@
+basePath: /
+info:
+  contact: {}
+  description: Backend service for the EventHub events platform.
+  title: EventHub API
+  version: "1.0"
+paths:
+  /health:
+    get:
+      description: Returns service availability status
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{"status":"ok"}'
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Service healthcheck
+      tags:
+      - health
+swagger: "2.0"

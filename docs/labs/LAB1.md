@@ -48,4 +48,4 @@ make stop
 }
 ```
 
-![Пруф](images/lab1.png)
+![Пруф](../images/lab1.png)

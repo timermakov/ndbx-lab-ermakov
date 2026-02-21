@@ -1,4 +1,10 @@
 // Package main is the entrypoint for the EventHub HTTP service.
+//
+//	@title		    EventHub API
+//	@version	    1.0
+//	@description	Backend service for the EventHub events platform.
+//
+//	@BasePath	    /
 package main
 
 import (
@@ -13,6 +19,10 @@ import (
 	"time"
 
 	"github.com/timermakov/ndbx-lab-ermakov/internal/handler"
+
+	_ "github.com/timermakov/ndbx-lab-ermakov/docs"
+
+	httpSwagger "github.com/swaggo/http-swagger/v2"
 )
 
 func main() {
@@ -24,6 +34,9 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", handler.Health)
+	mux.Handle("GET /swagger/", httpSwagger.Handler(
+		httpSwagger.URL("/swagger/doc.json"),
+	))
 
 	srv := &http.Server{
 		Addr:         addr,
