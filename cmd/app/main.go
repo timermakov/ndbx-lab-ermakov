@@ -16,8 +16,8 @@ import (
 )
 
 func main() {
-	host := env("APP_HOST", "0.0.0.0")
-	port := env("APP_PORT", "8080")
+	host := env("APP_HOST")
+	port := env("APP_PORT")
 	addr := net.JoinHostPort(host, port)
 
 	logger := log.New(os.Stderr, "eventhub: ", log.LstdFlags|log.Lshortfile)
@@ -61,9 +61,9 @@ func main() {
 	logger.Println("server stopped")
 }
 
-func env(key, fallback string) string {
+func env(key string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
-	return fallback
+	return ""
 }
