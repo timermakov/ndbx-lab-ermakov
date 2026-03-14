@@ -44,15 +44,18 @@ func main() {
 	if err != nil {
 		logger.Fatalf("invalid APP_USER_SESSION_TTL: %v", err)
 	}
+	redisHost := env("REDIS_HOST")
+	redisPort := env("REDIS_PORT")
+	if redisHost == "" || redisPort == "" {
+		logger.Fatal("REDIS_HOST and REDIS_PORT must be set")
+	}
+
 	redisDB, err := intFromEnv("REDIS_DB")
 	if err != nil {
 		logger.Fatalf("invalid REDIS_DB: %v", err)
 	}
 
-	redisAddr := net.JoinHostPort(env("REDIS_HOST"), env("REDIS_PORT"))
-	if redisAddr == "" {
-		logger.Fatal("REDIS_HOST and REDIS_PORT must be set")
-	}
+	redisAddr := net.JoinHostPort(redisHost, redisPort)
 
 	redisClient := redis.NewClient(&redis.Options{
 		Addr:     redisAddr,

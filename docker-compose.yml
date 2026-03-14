@@ -7,4 +7,12 @@ services:
       - .env.local
     ports:
       - "${APP_PORT}:${APP_PORT}"
+    depends_on:
+      - redis
     restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
