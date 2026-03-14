@@ -2,7 +2,7 @@ FROM golang:1.23-alpine AS builder
 
 WORKDIR /build
 COPY go.mod go.sum ./
-RUN go mod download
+RUN go mod download && go get github.com/redis/go-redis/v9@v9.7.0
 COPY cmd/ cmd/
 COPY internal/ internal/
 COPY docs/ docs/
