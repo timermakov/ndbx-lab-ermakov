@@ -86,20 +86,37 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 // Logout handles POST /auth/logout.
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	sessionID, ok := getValidSessionCookie(r)
-	if ok {
-		if err := h.sessions.Delete(r.Context(), sessionID); err != nil {
-			log.Printf("auth logout delete session: %v", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
+	if !ok {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
+	currentSession, found, err := h.sessions.Get(r.Context(), sessionID)
+	if err != nil {
+		log.Printf("auth logout get session: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	// Logout is allowed only for authenticated sessions.
+	if !found || currentSession.UserID == "" {
+		if found {
+			if _, touchErr := h.sessions.Touch(r.Context(), sessionID, time.Now()); touchErr == nil {
+				setSessionCookieWithMaxAge(w, sessionID, h.ttlSeconds)
+			}
 		}
+
+		w.WriteHeader(http.StatusUnauthorized)
+		return
 	}
 
-	expireID := sessionID
-	if expireID == "" {
-		expireID = "deleted"
+	if err := h.sessions.Delete(r.Context(), sessionID); err != nil {
+		log.Printf("auth logout delete session: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
 	}
 
-	expireSessionCookie(w, expireID)
+	expireSessionCookie(w, sessionID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
