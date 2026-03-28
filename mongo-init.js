@@ -10,5 +10,8 @@ const appDb = db.getSiblingDB(dbName);
 appDb.createUser({
   user: username,
   pwd: password,
-  roles: [{ role: "readWrite", db: dbName }],
+  roles: [
+    { role: "readWrite", db: dbName },
+    { role: "dbOwner", db: dbName },
+  ],
 });
