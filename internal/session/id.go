@@ -1,3 +1,4 @@
+// Package session defines session identifiers and storage access.
 package session
 
 import (

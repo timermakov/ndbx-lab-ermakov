@@ -1,3 +1,4 @@
+// Package repository provides data persistence implementations.
 package repository
 
 import "errors"

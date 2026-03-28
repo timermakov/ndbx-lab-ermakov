@@ -1,3 +1,4 @@
+// Package model contains domain and persistence models.
 package model
 
 // EventLocation represents an event location subdocument.

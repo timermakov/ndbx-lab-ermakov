@@ -116,7 +116,9 @@ func (r *MongoEventRepository) List(ctx context.Context, filter EventFilter) ([]
 	if err != nil {
 		return nil, fmt.Errorf("find events: %w", err)
 	}
-	defer cursor.Close(ctx)
+	defer func() {
+		_ = cursor.Close(ctx)
+	}()
 
 	type eventDoc struct {
 		ID          primitive.ObjectID `bson:"_id"`

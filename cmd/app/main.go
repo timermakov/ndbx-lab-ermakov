@@ -56,7 +56,11 @@ func main() {
 	if err := redisClient.Ping(ctx).Err(); err != nil {
 		logger.Fatalf("redis ping failed: %v", err)
 	}
-	defer redisClient.Close()
+	defer func() {
+		if closeErr := redisClient.Close(); closeErr != nil {
+			logger.Printf("redis close failed: %v", closeErr)
+		}
+	}()
 
 	mongoClient, err := mongo.Connect(ctx, options.Client().ApplyURI(mongoURI(cfg)))
 	if err != nil {

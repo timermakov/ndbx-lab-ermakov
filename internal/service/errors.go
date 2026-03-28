@@ -1,3 +1,4 @@
+// Package service contains business logic for EventHub use cases.
 package service
 
 import "errors"
