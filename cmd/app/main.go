@@ -10,18 +10,17 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/timermakov/ndbx-lab-ermakov/internal/config"
 	"github.com/timermakov/ndbx-lab-ermakov/internal/handler"
 	"github.com/timermakov/ndbx-lab-ermakov/internal/session"
 
@@ -33,34 +32,17 @@ import (
 func main() {
 	logger := log.New(os.Stderr, "eventhub: ", log.LstdFlags|log.Lshortfile)
 
-	host := env("APP_HOST")
-	port := env("APP_PORT")
-	if host == "" || port == "" {
-		logger.Fatal("APP_HOST and APP_PORT must be set")
-	}
-	addr := net.JoinHostPort(host, port)
-
-	sessionTTLSeconds, err := intFromEnv("APP_USER_SESSION_TTL")
+	cfg, err := config.Load()
 	if err != nil {
-		logger.Fatalf("invalid APP_USER_SESSION_TTL: %v", err)
+		logger.Fatalf("load config: %v", err)
 	}
-	redisHost := env("REDIS_HOST")
-	redisPort := env("REDIS_PORT")
-	if redisHost == "" || redisPort == "" {
-		logger.Fatal("REDIS_HOST and REDIS_PORT must be set")
-	}
-
-	redisDB, err := intFromEnv("REDIS_DB")
-	if err != nil {
-		logger.Fatalf("invalid REDIS_DB: %v", err)
-	}
-
-	redisAddr := net.JoinHostPort(redisHost, redisPort)
+	addr := net.JoinHostPort(cfg.AppHost, cfg.AppPort)
+	redisAddr := net.JoinHostPort(cfg.RedisHost, cfg.RedisPort)
 
 	redisClient := redis.NewClient(&redis.Options{
 		Addr:     redisAddr,
-		Password: env("REDIS_PASSWORD"),
-		DB:       redisDB,
+		Password: cfg.RedisPassword,
+		DB:       cfg.RedisDB,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -70,11 +52,11 @@ func main() {
 		logger.Fatalf("redis ping failed: %v", err)
 	}
 
-	store := session.NewRedisStore(redisClient, time.Duration(sessionTTLSeconds)*time.Second)
+	store := session.NewRedisStore(redisClient, time.Duration(cfg.AppUserSessionTTL)*time.Second)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", handler.Health)
-	mux.HandleFunc("POST /session", handler.NewSessionHandler(store, sessionTTLSeconds))
+	mux.HandleFunc("POST /session", handler.NewSessionHandler(store, cfg.AppUserSessionTTL))
 	mux.Handle("GET /swagger/", httpSwagger.Handler(
 		httpSwagger.URL("/swagger/doc.json"),
 	))
@@ -113,24 +95,4 @@ func main() {
 		logger.Fatalf("shutdown error: %v", err)
 	}
 	logger.Println("server stopped")
-}
-
-// env returns the value of the environment variable or empty string if not set.
-func env(key string) string {
-	return os.Getenv(key)
-}
-
-// intFromEnv parses the environment variable value as an integer.
-func intFromEnv(key string) (int, error) {
-	value := env(key)
-	if value == "" {
-		return 0, fmt.Errorf("environment variable %s is not set", key)
-	}
-
-	v, err := strconv.Atoi(value)
-	if err != nil {
-		return 0, fmt.Errorf("parse %s: %w", key, err)
-	}
-
-	return v, nil
 }
