@@ -49,20 +49,17 @@ func main() {
 		Password: cfg.RedisPassword,
 		DB:       cfg.RedisDB,
 	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := redisClient.Ping(ctx).Err(); err != nil {
-		logger.Fatalf("redis ping failed: %v", err)
-	}
 	defer func() {
 		if closeErr := redisClient.Close(); closeErr != nil {
 			logger.Printf("redis close failed: %v", closeErr)
 		}
 	}()
 
-	mongoClient, err := mongo.Connect(ctx, options.Client().ApplyURI(mongoURI(cfg)))
+	if err := waitForRedis(redisClient, 30, time.Second); err != nil {
+		logger.Fatalf("redis ping failed: %v", err)
+	}
+
+	mongoClient, err := mongo.Connect(context.Background(), options.Client().ApplyURI(mongoURI(cfg)))
 	if err != nil {
 		logger.Fatalf("mongo connect failed: %v", err)
 	}
@@ -74,7 +71,7 @@ func main() {
 		}
 	}()
 
-	if err := mongoClient.Ping(ctx, nil); err != nil {
+	if err := waitForMongo(mongoClient, 30, time.Second); err != nil {
 		logger.Fatalf("mongo ping failed: %v", err)
 	}
 
@@ -82,10 +79,12 @@ func main() {
 	userRepo := repository.NewMongoUserRepository(mongoDB)
 	eventRepo := repository.NewMongoEventRepository(mongoDB)
 
-	if err := userRepo.EnsureIndexes(ctx); err != nil {
+	indexCtx, indexCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer indexCancel()
+	if err := userRepo.EnsureIndexes(indexCtx); err != nil {
 		logger.Fatalf("ensure user indexes failed: %v", err)
 	}
-	if err := eventRepo.EnsureIndexes(ctx); err != nil {
+	if err := eventRepo.EnsureIndexes(indexCtx); err != nil {
 		logger.Fatalf("ensure event indexes failed: %v", err)
 	}
 
@@ -153,4 +152,38 @@ func mongoURI(cfg config.Config) string {
 		cfg.MongoHost,
 		cfg.MongoPort,
 	)
+}
+
+func waitForRedis(client *redis.Client, attempts int, delay time.Duration) error {
+	var lastErr error
+
+	for i := 0; i < attempts; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		lastErr = client.Ping(ctx).Err()
+		cancel()
+		if lastErr == nil {
+			return nil
+		}
+
+		time.Sleep(delay)
+	}
+
+	return fmt.Errorf("redis not ready after %d attempts: %w", attempts, lastErr)
+}
+
+func waitForMongo(client *mongo.Client, attempts int, delay time.Duration) error {
+	var lastErr error
+
+	for i := 0; i < attempts; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		lastErr = client.Ping(ctx, nil)
+		cancel()
+		if lastErr == nil {
+			return nil
+		}
+
+		time.Sleep(delay)
+	}
+
+	return fmt.Errorf("mongo not ready after %d attempts: %w", attempts, lastErr)
 }
