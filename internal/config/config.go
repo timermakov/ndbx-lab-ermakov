@@ -8,18 +8,18 @@ import (
 
 // Config contains all application runtime settings from environment.
 type Config struct {
-	AppHost             string
-	AppPort             string
-	AppUserSessionTTL   int
-	RedisHost           string
-	RedisPort           string
-	RedisPassword       string
-	RedisDB             int
-	MongoDatabase       string
-	MongoUser           string
-	MongoPassword       string
-	MongoHost           string
-	MongoPort           string
+	AppHost           string
+	AppPort           string
+	AppUserSessionTTL int
+	RedisHost         string
+	RedisPort         string
+	RedisPassword     string
+	RedisDB           int
+	MongoDatabase     string
+	MongoUser         string
+	MongoPassword     string
+	MongoHost         string
+	MongoPort         string
 }
 
 // Load reads and validates configuration from environment variables.
