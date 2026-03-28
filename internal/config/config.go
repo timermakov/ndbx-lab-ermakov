@@ -35,15 +35,6 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
-	// Keep compatibility with lab spec typo.
-	mongoDatabase := firstNonEmpty(
-		os.Getenv("MONGODB_DATABSE"),
-		os.Getenv("MONGODB_DATABASE"),
-	)
-	if mongoDatabase == "" {
-		return Config{}, fmt.Errorf("environment variable MONGODB_DATABSE is not set")
-	}
-
 	appHost, err := requiredString("APP_HOST")
 	if err != nil {
 		return Config{}, err
@@ -60,6 +51,11 @@ func Load() (Config, error) {
 	}
 
 	redisPort, err := requiredString("REDIS_PORT")
+	if err != nil {
+		return Config{}, err
+	}
+
+	mongoDatabase, err := requiredString("MONGODB_DATABASE")
 	if err != nil {
 		return Config{}, err
 	}
@@ -90,7 +86,7 @@ func Load() (Config, error) {
 		AppUserSessionTTL: appTTL,
 		RedisHost:         redisHost,
 		RedisPort:         redisPort,
-		RedisPassword:     os.Getenv("REDIS_PASSWORD"),
+		RedisPassword:     optionalString("REDIS_PASSWORD"),
 		RedisDB:           redisDB,
 		MongoDatabase:     mongoDatabase,
 		MongoUser:         mongoUser,
@@ -109,6 +105,10 @@ func requiredString(key string) (string, error) {
 	return value, nil
 }
 
+func optionalString(key string) string {
+	return os.Getenv(key)
+}
+
 func requiredInt(key string) (int, error) {
 	value, err := requiredString(key)
 	if err != nil {
@@ -121,14 +121,4 @@ func requiredInt(key string) (int, error) {
 	}
 
 	return parsed, nil
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-
-	return ""
 }
