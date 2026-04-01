@@ -16,13 +16,17 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 
+	"github.com/timermakov/ndbx-lab-ermakov/internal/config"
 	"github.com/timermakov/ndbx-lab-ermakov/internal/handler"
+	"github.com/timermakov/ndbx-lab-ermakov/internal/repository"
+	"github.com/timermakov/ndbx-lab-ermakov/internal/service"
 	"github.com/timermakov/ndbx-lab-ermakov/internal/session"
 
 	_ "github.com/timermakov/ndbx-lab-ermakov/docs"
@@ -33,48 +37,73 @@ import (
 func main() {
 	logger := log.New(os.Stderr, "eventhub: ", log.LstdFlags|log.Lshortfile)
 
-	host := env("APP_HOST")
-	port := env("APP_PORT")
-	if host == "" || port == "" {
-		logger.Fatal("APP_HOST and APP_PORT must be set")
-	}
-	addr := net.JoinHostPort(host, port)
-
-	sessionTTLSeconds, err := intFromEnv("APP_USER_SESSION_TTL")
+	cfg, err := config.Load()
 	if err != nil {
-		logger.Fatalf("invalid APP_USER_SESSION_TTL: %v", err)
+		logger.Fatalf("load config: %v", err)
 	}
-	redisHost := env("REDIS_HOST")
-	redisPort := env("REDIS_PORT")
-	if redisHost == "" || redisPort == "" {
-		logger.Fatal("REDIS_HOST and REDIS_PORT must be set")
-	}
-
-	redisDB, err := intFromEnv("REDIS_DB")
-	if err != nil {
-		logger.Fatalf("invalid REDIS_DB: %v", err)
-	}
-
-	redisAddr := net.JoinHostPort(redisHost, redisPort)
+	addr := net.JoinHostPort(cfg.AppHost, cfg.AppPort)
+	redisAddr := net.JoinHostPort(cfg.RedisHost, cfg.RedisPort)
 
 	redisClient := redis.NewClient(&redis.Options{
 		Addr:     redisAddr,
-		Password: env("REDIS_PASSWORD"),
-		DB:       redisDB,
+		Password: cfg.RedisPassword,
+		DB:       cfg.RedisDB,
 	})
+	defer func() {
+		if closeErr := redisClient.Close(); closeErr != nil {
+			logger.Printf("redis close failed: %v", closeErr)
+		}
+	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := redisClient.Ping(ctx).Err(); err != nil {
+	if err := waitForRedis(redisClient, 30, time.Second); err != nil {
 		logger.Fatalf("redis ping failed: %v", err)
 	}
 
-	store := session.NewRedisStore(redisClient, time.Duration(sessionTTLSeconds)*time.Second)
+	mongoClient, err := mongo.Connect(context.Background(), options.Client().ApplyURI(mongoURI(cfg)))
+	if err != nil {
+		logger.Fatalf("mongo connect failed: %v", err)
+	}
+	defer func() {
+		disconnectCtx, cancelDisconnect := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancelDisconnect()
+		if disconnectErr := mongoClient.Disconnect(disconnectCtx); disconnectErr != nil {
+			logger.Printf("mongo disconnect failed: %v", disconnectErr)
+		}
+	}()
+
+	if err := waitForMongo(mongoClient, 30, time.Second); err != nil {
+		logger.Fatalf("mongo ping failed: %v", err)
+	}
+
+	mongoDB := mongoClient.Database(cfg.MongoDatabase)
+	userRepo := repository.NewMongoUserRepository(mongoDB)
+	eventRepo := repository.NewMongoEventRepository(mongoDB)
+
+	indexCtx, indexCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer indexCancel()
+	if err := userRepo.EnsureIndexes(indexCtx); err != nil {
+		logger.Fatalf("ensure user indexes failed: %v", err)
+	}
+	if err := eventRepo.EnsureIndexes(indexCtx); err != nil {
+		logger.Fatalf("ensure event indexes failed: %v", err)
+	}
+
+	store := session.NewRedisStore(redisClient, time.Duration(cfg.AppUserSessionTTL)*time.Second)
+	userService := service.NewUserService(userRepo)
+	eventService := service.NewEventService(eventRepo)
+
+	usersHandler := handler.NewUsersHandler(userService, store, cfg.AppUserSessionTTL)
+	authHandler := handler.NewAuthHandler(userService, store, cfg.AppUserSessionTTL)
+	eventsHandler := handler.NewEventsHandler(eventService, store, cfg.AppUserSessionTTL)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", handler.Health)
-	mux.HandleFunc("POST /session", handler.NewSessionHandler(store, sessionTTLSeconds))
+	mux.HandleFunc("POST /session", handler.NewSessionHandler(store, cfg.AppUserSessionTTL))
+	mux.HandleFunc("POST /users", usersHandler.Register)
+	mux.HandleFunc("POST /auth/login", authHandler.Login)
+	mux.HandleFunc("POST /auth/logout", authHandler.Logout)
+	mux.HandleFunc("POST /events", eventsHandler.Create)
+	mux.HandleFunc("GET /events", eventsHandler.List)
 	mux.Handle("GET /swagger/", httpSwagger.Handler(
 		httpSwagger.URL("/swagger/doc.json"),
 	))
@@ -115,22 +144,46 @@ func main() {
 	logger.Println("server stopped")
 }
 
-// env returns the value of the environment variable or empty string if not set.
-func env(key string) string {
-	return os.Getenv(key)
+func mongoURI(cfg config.Config) string {
+	return fmt.Sprintf(
+		"mongodb://%s:%s@%s:%s/?authSource=admin",
+		cfg.MongoUser,
+		cfg.MongoPassword,
+		cfg.MongoHost,
+		cfg.MongoPort,
+	)
 }
 
-// intFromEnv parses the environment variable value as an integer.
-func intFromEnv(key string) (int, error) {
-	value := env(key)
-	if value == "" {
-		return 0, fmt.Errorf("environment variable %s is not set", key)
+func waitForRedis(client *redis.Client, attempts int, delay time.Duration) error {
+	var lastErr error
+
+	for i := 0; i < attempts; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		lastErr = client.Ping(ctx).Err()
+		cancel()
+		if lastErr == nil {
+			return nil
+		}
+
+		time.Sleep(delay)
 	}
 
-	v, err := strconv.Atoi(value)
-	if err != nil {
-		return 0, fmt.Errorf("parse %s: %w", key, err)
+	return fmt.Errorf("redis not ready after %d attempts: %w", attempts, lastErr)
+}
+
+func waitForMongo(client *mongo.Client, attempts int, delay time.Duration) error {
+	var lastErr error
+
+	for i := 0; i < attempts; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		lastErr = client.Ping(ctx, nil)
+		cancel()
+		if lastErr == nil {
+			return nil
+		}
+
+		time.Sleep(delay)
 	}
 
-	return v, nil
+	return fmt.Errorf("mongo not ready after %d attempts: %w", attempts, lastErr)
 }

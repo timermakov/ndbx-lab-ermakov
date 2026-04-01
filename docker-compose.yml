@@ -9,10 +9,26 @@ services:
       - "${APP_PORT}:${APP_PORT}"
     depends_on:
       - redis
+      - mongodb
     restart: unless-stopped
 
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "no"]
+    command: ["redis-server", "--appendonly", "no", "--port", "${REDIS_PORT}"]
     ports:
       - "${REDIS_PORT}:${REDIS_PORT}"
+
+  mongodb:
+    image: mongo:7
+    command: ["mongod", "--bind_ip_all", "--port", "${MONGODB_PORT}"]
+    environment:
+      MONGO_INITDB_DATABASE: ${MONGODB_DATABASE}
+      MONGO_INITDB_ROOT_USERNAME: ${MONGODB_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASSWORD}
+      MONGODB_DATABASE: ${MONGODB_DATABASE}
+      MONGODB_USER: ${MONGODB_USER}
+      MONGODB_PASSWORD: ${MONGODB_PASSWORD}
+    volumes:
+      - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    ports:
+      - "${MONGODB_PORT}:${MONGODB_PORT}"

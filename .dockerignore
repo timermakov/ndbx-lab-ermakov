@@ -1,0 +1,14 @@
+.git
+.gitignore
+terminals
+
+.env.local
+
+bin
+dist
+tmp
+coverage
+
+*.log
+*.out
+*.test

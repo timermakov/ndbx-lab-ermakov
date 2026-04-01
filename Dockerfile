@@ -1,11 +1,9 @@
-FROM golang:1.23-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /build
 COPY go.mod go.sum ./
-RUN go mod download && go get github.com/redis/go-redis/v9@v9.7.0
-COPY cmd/ cmd/
-COPY internal/ internal/
-COPY docs/ docs/
+RUN go mod download
+COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /app cmd/app/main.go
 
 FROM scratch
