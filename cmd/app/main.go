@@ -90,9 +90,9 @@ func main() {
 
 	store := session.NewRedisStore(redisClient, time.Duration(cfg.AppUserSessionTTL)*time.Second)
 	userService := service.NewUserService(userRepo)
-	eventService := service.NewEventService(eventRepo)
+	eventService := service.NewEventService(eventRepo, userRepo)
 
-	usersHandler := handler.NewUsersHandler(userService, store, cfg.AppUserSessionTTL)
+	usersHandler := handler.NewUsersHandler(userService, eventService, store, cfg.AppUserSessionTTL)
 	authHandler := handler.NewAuthHandler(userService, store, cfg.AppUserSessionTTL)
 	eventsHandler := handler.NewEventsHandler(eventService, store, cfg.AppUserSessionTTL)
 
@@ -100,10 +100,15 @@ func main() {
 	mux.HandleFunc("GET /health", handler.Health)
 	mux.HandleFunc("POST /session", handler.NewSessionHandler(store, cfg.AppUserSessionTTL))
 	mux.HandleFunc("POST /users", usersHandler.Register)
+	mux.HandleFunc("GET /users", usersHandler.List)
+	mux.HandleFunc("GET /users/{id}", usersHandler.GetByID)
+	mux.HandleFunc("GET /users/{id}/events", usersHandler.ListEvents)
 	mux.HandleFunc("POST /auth/login", authHandler.Login)
 	mux.HandleFunc("POST /auth/logout", authHandler.Logout)
 	mux.HandleFunc("POST /events", eventsHandler.Create)
 	mux.HandleFunc("GET /events", eventsHandler.List)
+	mux.HandleFunc("GET /events/{id}", eventsHandler.GetByID)
+	mux.HandleFunc("PATCH /events/{id}", eventsHandler.Patch)
 	mux.Handle("GET /swagger/", httpSwagger.Handler(
 		httpSwagger.URL("/swagger/doc.json"),
 	))
