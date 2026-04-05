@@ -12,7 +12,9 @@ import (
 
 type userRepoStub struct {
 	createFn        func(ctx context.Context, user model.User) (model.User, error)
+	getByIDFn       func(ctx context.Context, id string) (model.User, error)
 	getByUsernameFn func(ctx context.Context, username string) (model.User, error)
+	listFn          func(ctx context.Context, filter repository.UserFilter) ([]model.User, error)
 }
 
 func (s userRepoStub) EnsureIndexes(context.Context) error {
@@ -26,11 +28,25 @@ func (s userRepoStub) Create(ctx context.Context, user model.User) (model.User, 
 	return model.User{}, nil
 }
 
+func (s userRepoStub) GetByID(ctx context.Context, id string) (model.User, error) {
+	if s.getByIDFn != nil {
+		return s.getByIDFn(ctx, id)
+	}
+	return model.User{}, repository.ErrNotFound
+}
+
 func (s userRepoStub) GetByUsername(ctx context.Context, username string) (model.User, error) {
 	if s.getByUsernameFn != nil {
 		return s.getByUsernameFn(ctx, username)
 	}
 	return model.User{}, repository.ErrNotFound
+}
+
+func (s userRepoStub) List(ctx context.Context, filter repository.UserFilter) ([]model.User, error) {
+	if s.listFn != nil {
+		return s.listFn(ctx, filter)
+	}
+	return []model.User{}, nil
 }
 
 func TestUserServiceRegisterInvalidFullName(t *testing.T) {

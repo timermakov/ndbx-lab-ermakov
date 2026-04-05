@@ -12,4 +12,6 @@ var (
 	ErrAlreadyExists = errors.New("already exists")
 	// ErrInvalidCredentials indicates login/password mismatch.
 	ErrInvalidCredentials = errors.New("invalid credentials")
+	// ErrNotFound indicates entity absence.
+	ErrNotFound = errors.New("not found")
 )

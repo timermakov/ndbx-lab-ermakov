@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/timermakov/ndbx-lab-ermakov/internal/model"
@@ -27,6 +29,14 @@ type RegisterInput struct {
 	FullName string
 	Username string
 	Password string
+}
+
+// UsersQuery holds GET /users query parameters.
+type UsersQuery struct {
+	ID     string
+	Name   string
+	Limit  string
+	Offset string
 }
 
 // Register validates and creates a user with bcrypt password hashing.
@@ -85,4 +95,60 @@ func (s *UserService) Login(ctx context.Context, username, password string) (mod
 	}
 
 	return user, "", nil
+}
+
+// ValidateListQuery validates and converts users list query parameters.
+func (s *UserService) ValidateListQuery(query UsersQuery) (repository.UserFilter, string, error) {
+	filter := repository.UserFilter{
+		ID:   strings.TrimSpace(query.ID),
+		Name: strings.TrimSpace(query.Name),
+	}
+
+	if filter.ID != "" {
+		if _, err := primitive.ObjectIDFromHex(filter.ID); err != nil {
+			return repository.UserFilter{}, "id", ErrInvalidParameter
+		}
+	}
+
+	if strings.TrimSpace(query.Limit) != "" {
+		limit, err := strconv.ParseUint(strings.TrimSpace(query.Limit), 10, 64)
+		if err != nil {
+			return repository.UserFilter{}, "limit", ErrInvalidParameter
+		}
+		filter.Limit = limit
+	}
+
+	if strings.TrimSpace(query.Offset) != "" {
+		offset, err := strconv.ParseUint(strings.TrimSpace(query.Offset), 10, 64)
+		if err != nil {
+			return repository.UserFilter{}, "offset", ErrInvalidParameter
+		}
+		filter.Offset = offset
+	}
+
+	return filter, "", nil
+}
+
+// List returns users by filter.
+func (s *UserService) List(ctx context.Context, filter repository.UserFilter) ([]model.User, error) {
+	users, err := s.users.List(ctx, filter)
+	if err != nil {
+		return nil, fmt.Errorf("list users: %w", err)
+	}
+
+	return users, nil
+}
+
+// GetByID returns user by id.
+func (s *UserService) GetByID(ctx context.Context, id string) (model.User, error) {
+	user, err := s.users.GetByID(ctx, strings.TrimSpace(id))
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return model.User{}, ErrNotFound
+		}
+
+		return model.User{}, fmt.Errorf("get user by id: %w", err)
+	}
+
+	return user, nil
 }
