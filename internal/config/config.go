@@ -75,7 +75,7 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
-	mongoPort, err := requiredString("MONGODB_PORT")
+	mongoPort, err := requiredString("MONGODB_MONGOS_PORT")
 	if err != nil {
 		return Config{}, err
 	}
