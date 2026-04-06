@@ -1,34 +1,31 @@
 #!/bin/bash
-set -euo pipefail
+set -eu
 
-wait_for_mongo() {
-  local host="$1"
-  local port="$2"
-
-  until mongosh --host "$host" --port "$port" --quiet --eval "db.adminCommand({ ping: 1 }).ok" >/dev/null 2>&1; do
+retry() {
+  attempts="$1"
+  shift
+  i=1
+  while ! "$@"; do
+    if [ "$i" -ge "$attempts" ]; then
+      return 1
+    fi
+    i=$((i + 1))
     sleep 2
   done
 }
 
-init_rs_if_needed() {
-  local host="$1"
-  local port="$2"
-  local js="$3"
-
-  mongosh --host "$host" --port "$port" --quiet --eval "$js"
+mongo_eval() {
+  host="$1"
+  port="$2"
+  script="$3"
+  mongosh --host "$host" --port "$port" --quiet --eval "$script"
 }
 
-wait_for_mongo "mongo-cfg1" "${MONGODB_CONFIG1_PORT}"
-wait_for_mongo "mongo-cfg2" "${MONGODB_CONFIG2_PORT}"
-wait_for_mongo "mongo-cfg3" "${MONGODB_CONFIG3_PORT}"
-wait_for_mongo "mongo-shard1-1" "${MONGODB_SHARD1_NODE1_PORT}"
-wait_for_mongo "mongo-shard1-2" "${MONGODB_SHARD1_NODE2_PORT}"
-wait_for_mongo "mongo-shard1-3" "${MONGODB_SHARD1_NODE3_PORT}"
-wait_for_mongo "mongo-shard2-1" "${MONGODB_SHARD2_NODE1_PORT}"
-wait_for_mongo "mongo-shard2-2" "${MONGODB_SHARD2_NODE2_PORT}"
-wait_for_mongo "mongo-shard2-3" "${MONGODB_SHARD2_NODE3_PORT}"
+retry 30 mongo_eval "mongo-cfg1" "${MONGODB_CONFIG1_PORT}" "db.adminCommand({ ping: 1 })" >/dev/null
+retry 30 mongo_eval "mongo-cfg2" "${MONGODB_CONFIG2_PORT}" "db.adminCommand({ ping: 1 })" >/dev/null
+retry 30 mongo_eval "mongo-cfg3" "${MONGODB_CONFIG3_PORT}" "db.adminCommand({ ping: 1 })" >/dev/null
 
-init_rs_if_needed "mongo-cfg1" "${MONGODB_CONFIG1_PORT}" "
+retry 30 mongo_eval "mongo-cfg1" "${MONGODB_CONFIG1_PORT}" "
 try {
   rs.status();
 } catch (e) {
@@ -42,9 +39,14 @@ try {
     ]
   });
 }
-"
+" >/dev/null
 
-init_rs_if_needed "mongo-shard1-1" "${MONGODB_SHARD1_NODE1_PORT}" "
+retry 30 mongo_eval "mongo-cfg1" "${MONGODB_CONFIG1_PORT}" "rs.status().ok" >/dev/null
+
+retry 30 mongo_eval "mongo-shard1-1" "${MONGODB_SHARD1_NODE1_PORT}" "db.adminCommand({ ping: 1 })" >/dev/null
+retry 30 mongo_eval "mongo-shard2-1" "${MONGODB_SHARD2_NODE1_PORT}" "db.adminCommand({ ping: 1 })" >/dev/null
+
+retry 30 mongo_eval "mongo-shard1-1" "${MONGODB_SHARD1_NODE1_PORT}" "
 try {
   rs.status();
 } catch (e) {
@@ -57,9 +59,9 @@ try {
     ]
   });
 }
-"
+" >/dev/null
 
-init_rs_if_needed "mongo-shard2-1" "${MONGODB_SHARD2_NODE1_PORT}" "
+retry 30 mongo_eval "mongo-shard2-1" "${MONGODB_SHARD2_NODE1_PORT}" "
 try {
   rs.status();
 } catch (e) {
@@ -72,15 +74,17 @@ try {
     ]
   });
 }
-"
+" >/dev/null
 
-sleep "${MONGODB_INIT_SLEEP_SECONDS}"
-wait_for_mongo "mongos" "${MONGODB_MONGOS_PORT}"
+retry 30 mongo_eval "mongo-shard1-1" "${MONGODB_SHARD1_NODE1_PORT}" "rs.status().ok" >/dev/null
+retry 30 mongo_eval "mongo-shard2-1" "${MONGODB_SHARD2_NODE1_PORT}" "rs.status().ok" >/dev/null
 
-mongosh --host "mongos" --port "${MONGODB_MONGOS_PORT}" --quiet --eval "
-const existingShards = db.adminCommand({ listShards: 1 }).shards || [];
-const hasShard1 = existingShards.some((shard) => shard._id === '${MONGODB_SHARD1_NAME}');
-const hasShard2 = existingShards.some((shard) => shard._id === '${MONGODB_SHARD2_NAME}');
+retry 30 mongo_eval "mongos" "${MONGODB_MONGOS_PORT}" "db.adminCommand({ ping: 1 })" >/dev/null
+
+retry 30 mongo_eval "mongos" "${MONGODB_MONGOS_PORT}" "
+const shards = db.adminCommand({ listShards: 1 }).shards || [];
+const hasShard1 = shards.some((s) => s._id === '${MONGODB_SHARD1_NAME}');
+const hasShard2 = shards.some((s) => s._id === '${MONGODB_SHARD2_NAME}');
 
 if (!hasShard1) {
   sh.addShard('${MONGODB_SHARD1_REPLICA_SET}/mongo-shard1-1:${MONGODB_SHARD1_NODE1_PORT},mongo-shard1-2:${MONGODB_SHARD1_NODE2_PORT},mongo-shard1-3:${MONGODB_SHARD1_NODE3_PORT}', '${MONGODB_SHARD1_NAME}');
@@ -92,9 +96,9 @@ if (!hasShard2) {
 sh.enableSharding('${MONGODB_DATABASE}');
 sh.shardCollection('${MONGODB_DATABASE}.events', { created_by: 'hashed' });
 
-const appDb = db.getSiblingDB('${MONGODB_DATABASE}');
-if (!appDb.getUser('${MONGODB_USER}')) {
-  appDb.createUser({
+const adminDb = db.getSiblingDB('admin');
+if (!adminDb.getUser('${MONGODB_USER}')) {
+  adminDb.createUser({
     user: '${MONGODB_USER}',
     pwd: '${MONGODB_PASSWORD}',
     roles: [
@@ -103,4 +107,6 @@ if (!appDb.getUser('${MONGODB_USER}')) {
     ]
   });
 }
-"
+" >/dev/null
+
+echo "mongo cluster initialized"

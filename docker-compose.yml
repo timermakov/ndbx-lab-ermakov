@@ -188,7 +188,8 @@ services:
       - mongos
     entrypoint:
       - bash
-      - /scripts/mongo-cluster-init.sh
+      - -lc
+      - "tr -d '\\r' < /scripts/mongo-cluster-init.sh | bash"
     volumes:
       - ./mongo-cluster-init.sh:/scripts/mongo-cluster-init.sh:ro
 

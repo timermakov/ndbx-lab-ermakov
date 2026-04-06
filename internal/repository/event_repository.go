@@ -63,8 +63,7 @@ func (r *MongoEventRepository) EnsureIndexes(ctx context.Context) error {
 		{
 			Keys: bson.D{{Key: "title", Value: 1}},
 			Options: options.Index().
-				SetUnique(true).
-				SetName("title_unique"),
+				SetName("title"),
 		},
 		{
 			Keys: bson.D{{Key: "title", Value: 1}, {Key: "created_by", Value: 1}},
