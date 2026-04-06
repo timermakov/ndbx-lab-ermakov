@@ -79,9 +79,9 @@ try {
 retry 30 mongo_eval "mongo-shard1-1" "${MONGODB_SHARD1_NODE1_PORT}" "rs.status().ok" >/dev/null
 retry 30 mongo_eval "mongo-shard2-1" "${MONGODB_SHARD2_NODE1_PORT}" "rs.status().ok" >/dev/null
 
-retry 30 mongo_eval "mongos" "${MONGODB_MONGOS_PORT}" "db.adminCommand({ ping: 1 })" >/dev/null
+retry 30 mongo_eval "mongos" "${MONGODB_PORT}" "db.adminCommand({ ping: 1 })" >/dev/null
 
-retry 30 mongo_eval "mongos" "${MONGODB_MONGOS_PORT}" "
+retry 30 mongo_eval "mongos" "${MONGODB_PORT}" "
 const shards = db.adminCommand({ listShards: 1 }).shards || [];
 const hasShard1 = shards.some((s) => s._id === '${MONGODB_SHARD1_NAME}');
 const hasShard2 = shards.some((s) => s._id === '${MONGODB_SHARD2_NAME}');

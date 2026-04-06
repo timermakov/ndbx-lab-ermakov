@@ -161,7 +161,7 @@ services:
       - mongos
       - --bind_ip_all
       - --port
-      - "${MONGODB_MONGOS_PORT}"
+      - "${MONGODB_PORT}"
       - --configdb
       - "${MONGODB_CONFIG_REPLICA_SET}/mongo-cfg1:${MONGODB_CONFIG1_PORT},mongo-cfg2:${MONGODB_CONFIG2_PORT},mongo-cfg3:${MONGODB_CONFIG3_PORT}"
     depends_on:
@@ -169,7 +169,7 @@ services:
       - mongo-cfg2
       - mongo-cfg3
     ports:
-      - "${MONGODB_MONGOS_PORT}:${MONGODB_MONGOS_PORT}"
+      - "${MONGODB_PORT}:${MONGODB_PORT}"
 
   mongo-cluster-init:
     image: mongo:7
