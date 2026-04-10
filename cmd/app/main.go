@@ -151,11 +151,12 @@ func main() {
 
 func mongoURI(cfg config.Config) string {
 	return fmt.Sprintf(
-		"mongodb://%s:%s@%s:%s/?authSource=admin",
+		"mongodb://%s:%s@%s:%s/%s",
 		cfg.MongoUser,
 		cfg.MongoPassword,
 		cfg.MongoHost,
 		cfg.MongoPort,
+		cfg.MongoDatabase,
 	)
 }
 

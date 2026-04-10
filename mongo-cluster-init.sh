@@ -96,9 +96,9 @@ if (!hasShard2) {
 sh.enableSharding('${MONGODB_DATABASE}');
 sh.shardCollection('${MONGODB_DATABASE}.events', { created_by: 'hashed' });
 
-const adminDb = db.getSiblingDB('admin');
-if (!adminDb.getUser('${MONGODB_USER}')) {
-  adminDb.createUser({
+const appDb = db.getSiblingDB('${MONGODB_DATABASE}');
+if (!appDb.getUser('${MONGODB_USER}')) {
+  appDb.createUser({
     user: '${MONGODB_USER}',
     pwd: '${MONGODB_PASSWORD}',
     roles: [
