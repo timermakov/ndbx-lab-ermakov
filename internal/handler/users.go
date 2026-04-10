@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/timermakov/ndbx-lab-ermakov/internal/repository"
 	"github.com/timermakov/ndbx-lab-ermakov/internal/service"
 	"github.com/timermakov/ndbx-lab-ermakov/internal/session"
 )
@@ -199,9 +198,36 @@ func (h *UsersHandler) ListEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	events, listErr := h.events.List(r.Context(), repository.EventFilter{
-		CreatedBy: userID,
+	filter, invalidParameter, err := h.events.ValidateListQuery(service.EventsQuery{
+		ID:        r.URL.Query().Get("id"),
+		Title:     r.URL.Query().Get("title"),
+		Category:  r.URL.Query().Get("category"),
+		PriceFrom: r.URL.Query().Get("price_from"),
+		PriceTo:   r.URL.Query().Get("price_to"),
+		City:      r.URL.Query().Get("city"),
+		DateFrom:  r.URL.Query().Get("date_from"),
+		DateTo:    r.URL.Query().Get("date_to"),
+		Limit:     r.URL.Query().Get("limit"),
+		Offset:    r.URL.Query().Get("offset"),
 	})
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidParameter) {
+			h.touchExistingSessionIfPossible(w, r)
+			writeJSON(w, http.StatusBadRequest, errorResponse{
+				Message: `invalid "` + invalidParameter + `" field`,
+			})
+			return
+		}
+
+		log.Printf("users events list query: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	filter.CreatedBy = userID
+	filter.CreatedByName = ""
+
+	events, listErr := h.events.List(r.Context(), filter)
 	if listErr != nil {
 		log.Printf("users events list: %v", listErr)
 		w.WriteHeader(http.StatusInternalServerError)
