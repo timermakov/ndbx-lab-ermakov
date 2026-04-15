@@ -8,8 +8,10 @@ services:
     ports:
       - "${APP_PORT}:${APP_PORT}"
     depends_on:
-      - redis
-      - mongodb
+      redis:
+        condition: service_started
+      mongo-cluster-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   redis:
@@ -18,17 +20,186 @@ services:
     ports:
       - "${REDIS_PORT}:${REDIS_PORT}"
 
-  mongodb:
+  mongo-cfg1:
     image: mongo:7
-    command: ["mongod", "--bind_ip_all", "--port", "${MONGODB_PORT}"]
-    environment:
-      MONGO_INITDB_DATABASE: ${MONGODB_DATABASE}
-      MONGO_INITDB_ROOT_USERNAME: ${MONGODB_USER}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASSWORD}
-      MONGODB_DATABASE: ${MONGODB_DATABASE}
-      MONGODB_USER: ${MONGODB_USER}
-      MONGODB_PASSWORD: ${MONGODB_PASSWORD}
+    command:
+      - mongod
+      - --configsvr
+      - --replSet
+      - "${MONGODB_CONFIG_REPLICA_SET}"
+      - --bind_ip_all
+      - --port
+      - "${MONGODB_CONFIG1_PORT}"
     volumes:
-      - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+      - mongo_cfg1_data:/data/db
+    ports:
+      - "${MONGODB_CONFIG1_PORT}:${MONGODB_CONFIG1_PORT}"
+
+  mongo-cfg2:
+    image: mongo:7
+    command:
+      - mongod
+      - --configsvr
+      - --replSet
+      - "${MONGODB_CONFIG_REPLICA_SET}"
+      - --bind_ip_all
+      - --port
+      - "${MONGODB_CONFIG2_PORT}"
+    volumes:
+      - mongo_cfg2_data:/data/db
+    ports:
+      - "${MONGODB_CONFIG2_PORT}:${MONGODB_CONFIG2_PORT}"
+
+  mongo-cfg3:
+    image: mongo:7
+    command:
+      - mongod
+      - --configsvr
+      - --replSet
+      - "${MONGODB_CONFIG_REPLICA_SET}"
+      - --bind_ip_all
+      - --port
+      - "${MONGODB_CONFIG3_PORT}"
+    volumes:
+      - mongo_cfg3_data:/data/db
+    ports:
+      - "${MONGODB_CONFIG3_PORT}:${MONGODB_CONFIG3_PORT}"
+
+  mongo-shard1-1:
+    image: mongo:7
+    command:
+      - mongod
+      - --shardsvr
+      - --replSet
+      - "${MONGODB_SHARD1_REPLICA_SET}"
+      - --bind_ip_all
+      - --port
+      - "${MONGODB_SHARD1_NODE1_PORT}"
+    volumes:
+      - mongo_shard1_node1_data:/data/db
+    ports:
+      - "${MONGODB_SHARD1_NODE1_PORT}:${MONGODB_SHARD1_NODE1_PORT}"
+
+  mongo-shard1-2:
+    image: mongo:7
+    command:
+      - mongod
+      - --shardsvr
+      - --replSet
+      - "${MONGODB_SHARD1_REPLICA_SET}"
+      - --bind_ip_all
+      - --port
+      - "${MONGODB_SHARD1_NODE2_PORT}"
+    volumes:
+      - mongo_shard1_node2_data:/data/db
+    ports:
+      - "${MONGODB_SHARD1_NODE2_PORT}:${MONGODB_SHARD1_NODE2_PORT}"
+
+  mongo-shard1-3:
+    image: mongo:7
+    command:
+      - mongod
+      - --shardsvr
+      - --replSet
+      - "${MONGODB_SHARD1_REPLICA_SET}"
+      - --bind_ip_all
+      - --port
+      - "${MONGODB_SHARD1_NODE3_PORT}"
+    volumes:
+      - mongo_shard1_node3_data:/data/db
+    ports:
+      - "${MONGODB_SHARD1_NODE3_PORT}:${MONGODB_SHARD1_NODE3_PORT}"
+
+  mongo-shard2-1:
+    image: mongo:7
+    command:
+      - mongod
+      - --shardsvr
+      - --replSet
+      - "${MONGODB_SHARD2_REPLICA_SET}"
+      - --bind_ip_all
+      - --port
+      - "${MONGODB_SHARD2_NODE1_PORT}"
+    volumes:
+      - mongo_shard2_node1_data:/data/db
+    ports:
+      - "${MONGODB_SHARD2_NODE1_PORT}:${MONGODB_SHARD2_NODE1_PORT}"
+
+  mongo-shard2-2:
+    image: mongo:7
+    command:
+      - mongod
+      - --shardsvr
+      - --replSet
+      - "${MONGODB_SHARD2_REPLICA_SET}"
+      - --bind_ip_all
+      - --port
+      - "${MONGODB_SHARD2_NODE2_PORT}"
+    volumes:
+      - mongo_shard2_node2_data:/data/db
+    ports:
+      - "${MONGODB_SHARD2_NODE2_PORT}:${MONGODB_SHARD2_NODE2_PORT}"
+
+  mongo-shard2-3:
+    image: mongo:7
+    command:
+      - mongod
+      - --shardsvr
+      - --replSet
+      - "${MONGODB_SHARD2_REPLICA_SET}"
+      - --bind_ip_all
+      - --port
+      - "${MONGODB_SHARD2_NODE3_PORT}"
+    volumes:
+      - mongo_shard2_node3_data:/data/db
+    ports:
+      - "${MONGODB_SHARD2_NODE3_PORT}:${MONGODB_SHARD2_NODE3_PORT}"
+
+  mongos:
+    image: mongo:7
+    command:
+      - mongos
+      - --bind_ip_all
+      - --port
+      - "${MONGODB_PORT}"
+      - --configdb
+      - "${MONGODB_CONFIG_REPLICA_SET}/mongo-cfg1:${MONGODB_CONFIG1_PORT},mongo-cfg2:${MONGODB_CONFIG2_PORT},mongo-cfg3:${MONGODB_CONFIG3_PORT}"
+    depends_on:
+      - mongo-cfg1
+      - mongo-cfg2
+      - mongo-cfg3
     ports:
       - "${MONGODB_PORT}:${MONGODB_PORT}"
+
+  mongo-cluster-init:
+    image: mongo:7
+    env_file:
+      - .env.local
+    depends_on:
+      - mongo-cfg1
+      - mongo-cfg2
+      - mongo-cfg3
+      - mongo-shard1-1
+      - mongo-shard1-2
+      - mongo-shard1-3
+      - mongo-shard2-1
+      - mongo-shard2-2
+      - mongo-shard2-3
+      - mongos
+    entrypoint:
+      - bash
+      - -lc
+      - "tr -d '\\r' < /scripts/mongo-cluster-init.sh | bash"
+    volumes:
+      - ./mongo-cluster-init.sh:/scripts/mongo-cluster-init.sh:ro
+
+volumes:
+  mongo_cfg1_data:
+  mongo_cfg2_data:
+  mongo_cfg3_data:
+  mongo_shard1_node1_data:
+  mongo_shard1_node2_data:
+  mongo_shard1_node3_data:
+  mongo_shard2_node1_data:
+  mongo_shard2_node2_data:
+  mongo_shard2_node3_data:
