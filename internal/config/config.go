@@ -12,6 +12,7 @@ type Config struct {
 	AppHost           string
 	AppPort           string
 	AppUserSessionTTL int
+	AppLikeTTL        int
 	RedisHost         string
 	RedisPort         string
 	RedisPassword     string
@@ -21,11 +22,21 @@ type Config struct {
 	MongoPassword     string
 	MongoHost         string
 	MongoPort         string
+	CassandraHosts    string
+	CassandraPort     string
+	CassandraUsername string
+	CassandraPassword string
+	CassandraKeyspace string
+	CassandraConsistency string
 }
 
 // Load reads and validates configuration from environment variables.
 func Load() (Config, error) {
 	appTTL, err := requiredInt("APP_USER_SESSION_TTL")
+	if err != nil {
+		return Config{}, err
+	}
+	appLikeTTL, err := requiredInt("APP_LIKE_TTL")
 	if err != nil {
 		return Config{}, err
 	}
@@ -79,11 +90,28 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	cassandraHosts, err := requiredString("CASSANDRA_HOSTS")
+	if err != nil {
+		return Config{}, err
+	}
+	cassandraPort, err := requiredString("CASSANDRA_PORT")
+	if err != nil {
+		return Config{}, err
+	}
+	cassandraKeyspace, err := requiredString("CASSANDRA_KEYSPACE")
+	if err != nil {
+		return Config{}, err
+	}
+	cassandraConsistency, err := requiredString("CASSANDRA_CONSISTENCY")
+	if err != nil {
+		return Config{}, err
+	}
 
 	return Config{
 		AppHost:           appHost,
 		AppPort:           appPort,
 		AppUserSessionTTL: appTTL,
+		AppLikeTTL:        appLikeTTL,
 		RedisHost:         redisHost,
 		RedisPort:         redisPort,
 		RedisPassword:     optionalString("REDIS_PASSWORD"),
@@ -93,6 +121,12 @@ func Load() (Config, error) {
 		MongoPassword:     mongoPassword,
 		MongoHost:         mongoHost,
 		MongoPort:         mongoPort,
+		CassandraHosts:    cassandraHosts,
+		CassandraPort:     cassandraPort,
+		CassandraUsername: optionalString("CASSANDRA_USERNAME"),
+		CassandraPassword: optionalString("CASSANDRA_PASSWORD"),
+		CassandraKeyspace: cassandraKeyspace,
+		CassandraConsistency: cassandraConsistency,
 	}, nil
 }
 
