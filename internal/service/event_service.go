@@ -264,6 +264,9 @@ func (s *EventService) PutReaction(
 	if err := s.cache.DeleteByTitle(ctx, event.Title); err != nil {
 		return fmt.Errorf("invalidate reactions cache: %w", err)
 	}
+	if _, err := s.BuildReactionsByTitle(ctx, []model.Event{event}); err != nil {
+		return fmt.Errorf("refresh reactions cache: %w", err)
+	}
 
 	return nil
 }
