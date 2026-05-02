@@ -81,6 +81,69 @@ func (s eventUserRepoStub) List(context.Context, repository.UserFilter) ([]model
 	return []model.User{}, nil
 }
 
+type eventReactionRepoStub struct {
+	putFn             func(ctx context.Context, eventID, userID string, value model.ReactionValue, now time.Time) error
+	countByEventIDsFn func(ctx context.Context, eventIDs []string) (map[string]model.EventReactions, error)
+}
+
+func (s eventReactionRepoStub) EnsureSchema(context.Context) error {
+	return nil
+}
+
+func (s eventReactionRepoStub) Put(
+	ctx context.Context,
+	eventID, userID string,
+	value model.ReactionValue,
+	now time.Time,
+) error {
+	if s.putFn != nil {
+		return s.putFn(ctx, eventID, userID, value, now)
+	}
+
+	return nil
+}
+
+func (s eventReactionRepoStub) CountByEventIDs(
+	ctx context.Context,
+	eventIDs []string,
+) (map[string]model.EventReactions, error) {
+	if s.countByEventIDsFn != nil {
+		return s.countByEventIDsFn(ctx, eventIDs)
+	}
+
+	return map[string]model.EventReactions{}, nil
+}
+
+type eventReactionCacheStub struct {
+	getByTitleFn    func(ctx context.Context, title string) (model.EventReactions, bool, error)
+	setByTitleFn    func(ctx context.Context, title string, reactions model.EventReactions) error
+	deleteByTitleFn func(ctx context.Context, title string) error
+}
+
+func (s eventReactionCacheStub) GetByTitle(ctx context.Context, title string) (model.EventReactions, bool, error) {
+	if s.getByTitleFn != nil {
+		return s.getByTitleFn(ctx, title)
+	}
+
+	return model.EventReactions{}, false, nil
+}
+
+func (s eventReactionCacheStub) SetByTitle(ctx context.Context, title string, reactions model.EventReactions) error {
+	if s.setByTitleFn != nil {
+		return s.setByTitleFn(ctx, title, reactions)
+	}
+
+	return nil
+}
+
+func (s eventReactionCacheStub) DeleteByTitle(ctx context.Context, title string) error {
+	if s.deleteByTitleFn != nil {
+		return s.deleteByTitleFn(ctx, title)
+	}
+
+	return nil
+}
+
 func TestEventServiceValidateListQueryInvalidLimit(t *testing.T) {
 	t.Parallel()
 
@@ -136,5 +199,127 @@ func TestEventServiceCreateConflict(t *testing.T) {
 
 	if !errors.Is(err, service.ErrAlreadyExists) {
 		t.Fatalf("expected ErrAlreadyExists, got %v", err)
+	}
+}
+
+func TestEventServicePutReactionNotFound(t *testing.T) {
+	t.Parallel()
+
+	svc := service.NewEventService(eventRepoStub{
+		getByIDFn: func(context.Context, string) (model.Event, error) {
+			return model.Event{}, repository.ErrNotFound
+		},
+	}, eventUserRepoStub{})
+	svc.SetReactionsStorage(eventReactionRepoStub{}, eventReactionCacheStub{})
+
+	err := svc.PutReaction(context.Background(), "event-1", "user-1", model.ReactionLike, time.Now())
+	if !errors.Is(err, service.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestEventServicePutReactionUpdatesRepositoryAndCache(t *testing.T) {
+	t.Parallel()
+
+	var putCalled bool
+	var deleteCalled bool
+
+	svc := service.NewEventService(eventRepoStub{
+		getByIDFn: func(context.Context, string) (model.Event, error) {
+			return model.Event{ID: "event-1", Title: "The Event"}, nil
+		},
+	}, eventUserRepoStub{})
+	svc.SetReactionsStorage(
+		eventReactionRepoStub{
+			putFn: func(_ context.Context, eventID, userID string, value model.ReactionValue, _ time.Time) error {
+				putCalled = true
+				if eventID != "event-1" || userID != "user-1" {
+					t.Fatalf("unexpected reaction put args: %q %q", eventID, userID)
+				}
+				if value != model.ReactionLike {
+					t.Fatalf("unexpected reaction value: %d", value)
+				}
+
+				return nil
+			},
+		},
+		eventReactionCacheStub{
+			deleteByTitleFn: func(_ context.Context, title string) error {
+				deleteCalled = true
+				if title != "The Event" {
+					t.Fatalf("unexpected cache title %q", title)
+				}
+
+				return nil
+			},
+		},
+	)
+
+	if err := svc.PutReaction(context.Background(), "event-1", "user-1", model.ReactionLike, time.Now()); err != nil {
+		t.Fatalf("put reaction failed: %v", err)
+	}
+	if !putCalled {
+		t.Fatalf("expected reactions repository put call")
+	}
+	if !deleteCalled {
+		t.Fatalf("expected reactions cache delete call")
+	}
+}
+
+func TestEventServiceBuildReactionsByTitle(t *testing.T) {
+	t.Parallel()
+
+	svc := service.NewEventService(eventRepoStub{
+		listFn: func(_ context.Context, _ repository.EventFilter) ([]model.Event, error) {
+			return []model.Event{
+				{ID: "event-1", Title: "The Event"},
+				{ID: "event-2", Title: "The Event"},
+				{ID: "event-3", Title: "Other Event"},
+			}, nil
+		},
+	}, eventUserRepoStub{})
+
+	svc.SetReactionsStorage(
+		eventReactionRepoStub{
+			countByEventIDsFn: func(_ context.Context, eventIDs []string) (map[string]model.EventReactions, error) {
+				if len(eventIDs) != 2 {
+					t.Fatalf("unexpected event ids count: %d", len(eventIDs))
+				}
+
+				return map[string]model.EventReactions{
+					"event-1": {Likes: 2, Dislikes: 1},
+					"event-2": {Likes: 1, Dislikes: 0},
+				}, nil
+			},
+		},
+		eventReactionCacheStub{
+			getByTitleFn: func(_ context.Context, title string) (model.EventReactions, bool, error) {
+				if title != "The Event" {
+					t.Fatalf("unexpected cache lookup title: %q", title)
+				}
+
+				return model.EventReactions{}, false, nil
+			},
+			setByTitleFn: func(_ context.Context, title string, reactions model.EventReactions) error {
+				if title != "The Event" {
+					t.Fatalf("unexpected cache set title: %q", title)
+				}
+				if reactions.Likes != 3 || reactions.Dislikes != 1 {
+					t.Fatalf("unexpected cached reactions: %+v", reactions)
+				}
+
+				return nil
+			},
+		},
+	)
+
+	reactionsByTitle, err := svc.BuildReactionsByTitle(context.Background(), []model.Event{{ID: "event-1", Title: "The Event"}})
+	if err != nil {
+		t.Fatalf("build reactions failed: %v", err)
+	}
+
+	reactions := reactionsByTitle["The Event"]
+	if reactions.Likes != 3 || reactions.Dislikes != 1 {
+		t.Fatalf("unexpected reactions result: %+v", reactions)
 	}
 }

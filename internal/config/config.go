@@ -9,24 +9,24 @@ import (
 
 // Config contains all application runtime settings from environment.
 type Config struct {
-	AppHost           string
-	AppPort           string
-	AppUserSessionTTL int
-	AppLikeTTL        int
-	RedisHost         string
-	RedisPort         string
-	RedisPassword     string
-	RedisDB           int
-	MongoDatabase     string
-	MongoUser         string
-	MongoPassword     string
-	MongoHost         string
-	MongoPort         string
-	CassandraHosts    string
-	CassandraPort     string
-	CassandraUsername string
-	CassandraPassword string
-	CassandraKeyspace string
+	AppHost              string
+	AppPort              string
+	AppUserSessionTTL    int
+	AppLikeTTL           int
+	RedisHost            string
+	RedisPort            string
+	RedisPassword        string
+	RedisDB              int
+	MongoDatabase        string
+	MongoUser            string
+	MongoPassword        string
+	MongoHost            string
+	MongoPort            string
+	CassandraHosts       string
+	CassandraPort        string
+	CassandraUsername    string
+	CassandraPassword    string
+	CassandraKeyspace    string
 	CassandraConsistency string
 }
 
@@ -108,24 +108,24 @@ func Load() (Config, error) {
 	}
 
 	return Config{
-		AppHost:           appHost,
-		AppPort:           appPort,
-		AppUserSessionTTL: appTTL,
-		AppLikeTTL:        appLikeTTL,
-		RedisHost:         redisHost,
-		RedisPort:         redisPort,
-		RedisPassword:     optionalString("REDIS_PASSWORD"),
-		RedisDB:           redisDB,
-		MongoDatabase:     mongoDatabase,
-		MongoUser:         mongoUser,
-		MongoPassword:     mongoPassword,
-		MongoHost:         mongoHost,
-		MongoPort:         mongoPort,
-		CassandraHosts:    cassandraHosts,
-		CassandraPort:     cassandraPort,
-		CassandraUsername: optionalString("CASSANDRA_USERNAME"),
-		CassandraPassword: optionalString("CASSANDRA_PASSWORD"),
-		CassandraKeyspace: cassandraKeyspace,
+		AppHost:              appHost,
+		AppPort:              appPort,
+		AppUserSessionTTL:    appTTL,
+		AppLikeTTL:           appLikeTTL,
+		RedisHost:            redisHost,
+		RedisPort:            redisPort,
+		RedisPassword:        optionalString("REDIS_PASSWORD"),
+		RedisDB:              redisDB,
+		MongoDatabase:        mongoDatabase,
+		MongoUser:            mongoUser,
+		MongoPassword:        mongoPassword,
+		MongoHost:            mongoHost,
+		MongoPort:            mongoPort,
+		CassandraHosts:       cassandraHosts,
+		CassandraPort:        cassandraPort,
+		CassandraUsername:    optionalString("CASSANDRA_USERNAME"),
+		CassandraPassword:    optionalString("CASSANDRA_PASSWORD"),
+		CassandraKeyspace:    cassandraKeyspace,
 		CassandraConsistency: cassandraConsistency,
 	}, nil
 }

@@ -140,9 +140,27 @@ func (h *EventsHandler) List(w http.ResponseWriter, r *http.Request) {
 		setSessionCookieWithMaxAge(w, sessionID, h.ttlSeconds)
 	}
 
+	includeReactions := hasIncludeReactions(r)
+	reactionsByTitle := map[string]model.EventReactions{}
+	if includeReactions {
+		reactions, reactionsErr := h.events.BuildReactionsByTitle(r.Context(), events)
+		if reactionsErr != nil {
+			log.Printf("events list reactions: %v", reactionsErr)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		reactionsByTitle = reactions
+	}
+
 	responseEvents := make([]any, 0, len(events))
 	for _, event := range events {
-		responseEvents = append(responseEvents, eventToResponse(event))
+		var reactions *model.EventReactions
+		if includeReactions {
+			value := reactionsByTitle[event.Title]
+			reactions = &value
+		}
+
+		responseEvents = append(responseEvents, eventToResponse(event, reactions))
 	}
 
 	writeJSON(w, http.StatusOK, eventsResponse{
@@ -173,7 +191,87 @@ func (h *EventsHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 		setSessionCookieWithMaxAge(w, sessionID, h.ttlSeconds)
 	}
 
-	writeJSON(w, http.StatusOK, eventToResponse(event))
+	var reactions *model.EventReactions
+	if hasIncludeReactions(r) {
+		reactionsByTitle, reactionsErr := h.events.BuildReactionsByTitle(r.Context(), []model.Event{event})
+		if reactionsErr != nil {
+			log.Printf("events get by id reactions: %v", reactionsErr)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		value := reactionsByTitle[event.Title]
+		reactions = &value
+	}
+
+	writeJSON(w, http.StatusOK, eventToResponse(event, reactions))
+}
+
+// Like handles POST /events/{id}/like.
+func (h *EventsHandler) Like(w http.ResponseWriter, r *http.Request) {
+	sessionID, sessionData, ok, err := h.requireSession(r)
+	if err != nil {
+		log.Printf("events like session check: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	if !ok || sessionData.UserID == "" {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
+	eventID := strings.TrimSpace(r.PathValue("id"))
+	if likeErr := h.events.PutReaction(r.Context(), eventID, sessionData.UserID, model.ReactionLike, time.Now()); likeErr != nil {
+		if errors.Is(likeErr, service.ErrNotFound) {
+			setSessionCookieWithMaxAge(w, sessionID, h.ttlSeconds)
+			writeJSON(w, http.StatusNotFound, errorResponse{Message: "Event not found"})
+			return
+		}
+
+		log.Printf("events like: %v", likeErr)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	if _, touchErr := h.sessions.Touch(r.Context(), sessionID, time.Now()); touchErr != nil {
+		log.Printf("events like touch session: %v", touchErr)
+	}
+	setSessionCookieWithMaxAge(w, sessionID, h.ttlSeconds)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// Dislike handles POST /events/{id}/dislike.
+func (h *EventsHandler) Dislike(w http.ResponseWriter, r *http.Request) {
+	sessionID, sessionData, ok, err := h.requireSession(r)
+	if err != nil {
+		log.Printf("events dislike session check: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	if !ok || sessionData.UserID == "" {
+		expireSessionCookie(w, "")
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
+	eventID := strings.TrimSpace(r.PathValue("id"))
+	if dislikeErr := h.events.PutReaction(r.Context(), eventID, sessionData.UserID, model.ReactionDislike, time.Now()); dislikeErr != nil {
+		if errors.Is(dislikeErr, service.ErrNotFound) {
+			setSessionCookieWithMaxAge(w, sessionID, h.ttlSeconds)
+			writeJSON(w, http.StatusNotFound, errorResponse{Message: "Event not found"})
+			return
+		}
+
+		log.Printf("events dislike: %v", dislikeErr)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	if _, touchErr := h.sessions.Touch(r.Context(), sessionID, time.Now()); touchErr != nil {
+		log.Printf("events dislike touch session: %v", touchErr)
+	}
+	setSessionCookieWithMaxAge(w, sessionID, h.ttlSeconds)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // Patch handles PATCH /events/{id}.
@@ -296,7 +394,7 @@ func decodeUpdateEventRequest(r *http.Request) (service.UpdateEventInput, string
 	return input, "", nil
 }
 
-func eventToResponse(event model.Event) map[string]any {
+func eventToResponse(event model.Event, reactions *model.EventReactions) map[string]any {
 	location := map[string]any{
 		"address": event.Location.Address,
 	}
@@ -304,7 +402,7 @@ func eventToResponse(event model.Event) map[string]any {
 		location["city"] = event.Location.City
 	}
 
-	return map[string]any{
+	response := map[string]any{
 		"id":          event.ID,
 		"title":       event.Title,
 		"category":    event.Category,
@@ -316,4 +414,12 @@ func eventToResponse(event model.Event) map[string]any {
 		"started_at":  event.StartedAt,
 		"finished_at": event.FinishedAt,
 	}
+	if reactions != nil {
+		response["reactions"] = map[string]uint64{
+			"likes":    reactions.Likes,
+			"dislikes": reactions.Dislikes,
+		}
+	}
+
+	return response
 }

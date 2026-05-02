@@ -16,9 +16,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/gocql/gocql"
 	"github.com/redis/go-redis/v9"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -75,9 +78,33 @@ func main() {
 		logger.Fatalf("mongo ping failed: %v", err)
 	}
 
+	systemCassandraSession, err := createCassandraSession(cfg, "system")
+	if err != nil {
+		logger.Fatalf("cassandra system session failed: %v", err)
+	}
+	defer systemCassandraSession.Close()
+
+	if err := ensureCassandraKeyspace(context.Background(), systemCassandraSession, cfg.CassandraKeyspace); err != nil {
+		logger.Fatalf("ensure cassandra keyspace failed: %v", err)
+	}
+
+	cassandraSession, err := createCassandraSession(cfg, cfg.CassandraKeyspace)
+	if err != nil {
+		logger.Fatalf("cassandra keyspace session failed: %v", err)
+	}
+	defer cassandraSession.Close()
+
+	reactionRepo := repository.NewCassandraEventReactionRepository(systemCassandraSession, cassandraSession, cfg.CassandraKeyspace)
+	schemaCtx, schemaCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer schemaCancel()
+	if err := reactionRepo.EnsureSchema(schemaCtx); err != nil {
+		logger.Fatalf("ensure cassandra schema failed: %v", err)
+	}
+
 	mongoDB := mongoClient.Database(cfg.MongoDatabase)
 	userRepo := repository.NewMongoUserRepository(mongoDB)
 	eventRepo := repository.NewMongoEventRepository(mongoDB)
+	reactionCache := repository.NewRedisEventReactionCache(redisClient, time.Duration(cfg.AppLikeTTL)*time.Second)
 
 	indexCtx, indexCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer indexCancel()
@@ -91,6 +118,7 @@ func main() {
 	store := session.NewRedisStore(redisClient, time.Duration(cfg.AppUserSessionTTL)*time.Second)
 	userService := service.NewUserService(userRepo)
 	eventService := service.NewEventService(eventRepo, userRepo)
+	eventService.SetReactionsStorage(reactionRepo, reactionCache)
 
 	usersHandler := handler.NewUsersHandler(userService, eventService, store, cfg.AppUserSessionTTL)
 	authHandler := handler.NewAuthHandler(userService, store, cfg.AppUserSessionTTL)
@@ -108,6 +136,8 @@ func main() {
 	mux.HandleFunc("POST /events", eventsHandler.Create)
 	mux.HandleFunc("GET /events", eventsHandler.List)
 	mux.HandleFunc("GET /events/{id}", eventsHandler.GetByID)
+	mux.HandleFunc("POST /events/{id}/like", eventsHandler.Like)
+	mux.HandleFunc("POST /events/{id}/dislike", eventsHandler.Dislike)
 	mux.HandleFunc("PATCH /events/{id}", eventsHandler.Patch)
 	mux.Handle("GET /swagger/", httpSwagger.Handler(
 		httpSwagger.URL("/swagger/doc.json"),
@@ -192,4 +222,98 @@ func waitForMongo(client *mongo.Client, attempts int, delay time.Duration) error
 	}
 
 	return fmt.Errorf("mongo not ready after %d attempts: %w", attempts, lastErr)
+}
+
+func createCassandraSession(cfg config.Config, keyspace string) (*gocql.Session, error) {
+	hosts := splitAndTrim(cfg.CassandraHosts)
+	if len(hosts) == 0 {
+		return nil, fmt.Errorf("cassandra hosts are empty")
+	}
+
+	port, err := strconv.Atoi(cfg.CassandraPort)
+	if err != nil {
+		return nil, fmt.Errorf("parse cassandra port: %w", err)
+	}
+
+	consistency, err := parseCassandraConsistency(cfg.CassandraConsistency)
+	if err != nil {
+		return nil, err
+	}
+
+	cluster := gocql.NewCluster(hosts...)
+	cluster.Port = port
+	cluster.Consistency = consistency
+	cluster.ConnectTimeout = 10 * time.Second
+	cluster.Timeout = 10 * time.Second
+	cluster.Keyspace = keyspace
+	if cfg.CassandraUsername != "" || cfg.CassandraPassword != "" {
+		cluster.Authenticator = gocql.PasswordAuthenticator{
+			Username: cfg.CassandraUsername,
+			Password: cfg.CassandraPassword,
+		}
+	}
+
+	var lastErr error
+	for i := 0; i < 30; i++ {
+		session, createErr := cluster.CreateSession()
+		if createErr == nil {
+			return session, nil
+		}
+		lastErr = createErr
+		time.Sleep(time.Second)
+	}
+
+	return nil, fmt.Errorf("create cassandra session: %w", lastErr)
+}
+
+func ensureCassandraKeyspace(ctx context.Context, session *gocql.Session, keyspace string) error {
+	query := fmt.Sprintf(
+		`CREATE KEYSPACE IF NOT EXISTS %s WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}`,
+		keyspace,
+	)
+
+	if err := session.Query(query).WithContext(ctx).Exec(); err != nil {
+		return fmt.Errorf("create cassandra keyspace: %w", err)
+	}
+
+	return nil
+}
+
+func parseCassandraConsistency(value string) (gocql.Consistency, error) {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case "ANY":
+		return gocql.Any, nil
+	case "ONE":
+		return gocql.One, nil
+	case "TWO":
+		return gocql.Two, nil
+	case "THREE":
+		return gocql.Three, nil
+	case "QUORUM":
+		return gocql.Quorum, nil
+	case "ALL":
+		return gocql.All, nil
+	case "LOCAL_QUORUM":
+		return gocql.LocalQuorum, nil
+	case "EACH_QUORUM":
+		return gocql.EachQuorum, nil
+	case "LOCAL_ONE":
+		return gocql.LocalOne, nil
+	default:
+		return gocql.Any, fmt.Errorf("unsupported cassandra consistency: %s", value)
+	}
+}
+
+func splitAndTrim(values string) []string {
+	parts := strings.Split(values, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		result = append(result, trimmed)
+	}
+
+	return result
 }

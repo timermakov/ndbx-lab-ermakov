@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -88,6 +87,6 @@ func (c *RedisEventReactionCache) keyByTitle(title string) string {
 }
 
 func md5Hex(value string) string {
-	sum := md5.Sum([]byte(strings.TrimSpace(value)))
+	sum := md5.Sum([]byte(value))
 	return hex.EncodeToString(sum[:])
 }

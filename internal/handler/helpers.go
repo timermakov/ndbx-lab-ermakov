@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/timermakov/ndbx-lab-ermakov/internal/session"
@@ -62,4 +63,16 @@ func getValidSessionCookie(r *http.Request) (string, bool) {
 	}
 
 	return cookie.Value, true
+}
+
+func hasIncludeReactions(r *http.Request) bool {
+	for _, includeValue := range r.URL.Query()["include"] {
+		for _, token := range strings.Split(includeValue, ",") {
+			if strings.TrimSpace(strings.ToLower(token)) == "reactions" {
+				return true
+			}
+		}
+	}
+
+	return false
 }
