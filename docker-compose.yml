@@ -10,6 +10,8 @@ services:
     depends_on:
       redis:
         condition: service_started
+      cassandra:
+        condition: service_healthy
       mongo-cluster-init:
         condition: service_completed_successfully
     restart: unless-stopped
@@ -19,6 +21,32 @@ services:
     command: ["redis-server", "--appendonly", "no", "--port", "${REDIS_PORT}"]
     ports:
       - "${REDIS_PORT}:${REDIS_PORT}"
+
+  cassandra:
+    image: cassandra:latest
+    env_file:
+      - .env.local
+    environment:
+      CASSANDRA_CLUSTER_NAME: "${CASSANDRA_CLUSTER_NAME}"
+      CASSANDRA_DC: "${CASSANDRA_DC}"
+      CASSANDRA_RACK: "${CASSANDRA_RACK}"
+      CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
+      CASSANDRA_SEEDS: cassandra
+      CASSANDRA_NATIVE_TRANSPORT_PORT: "${CASSANDRA_PORT}"
+      MAX_HEAP_SIZE: "${CASSANDRA_MAX_HEAP_SIZE}"
+      HEAP_NEWSIZE: "${CASSANDRA_HEAP_NEWSIZE}"
+    mem_limit: "${CASSANDRA_MEM_LIMIT}"
+    mem_reservation: "${CASSANDRA_MEM_RESERVATION}"
+    ports:
+      - "${CASSANDRA_PORT}:${CASSANDRA_PORT}"
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh 127.0.0.1 ${CASSANDRA_PORT} -e \"DESCRIBE KEYSPACES\""]
+      interval: 20s
+      timeout: 10s
+      retries: 12
+      start_period: 60s
 
   mongo-cfg1:
     image: mongo:7
@@ -203,3 +231,4 @@ volumes:
   mongo_shard2_node1_data:
   mongo_shard2_node2_data:
   mongo_shard2_node3_data:
+  cassandra_data:
