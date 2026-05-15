@@ -9,8 +9,6 @@ import (
 
 // EventReactionRepository stores event reactions in persistent storage.
 type EventReactionRepository interface {
-	// EnsureSchema creates keyspace, table, and indexes required for reactions.
-	EnsureSchema(ctx context.Context) error
 	// Put updates or creates reaction for event/user pair.
 	Put(ctx context.Context, eventID, userID string, value model.ReactionValue, now time.Time) error
 	// CountByEventIDs returns per-event counters by physical event identifier.

@@ -86,10 +86,6 @@ type eventReactionRepoStub struct {
 	countByEventIDsFn func(ctx context.Context, eventIDs []string) (map[string]model.EventReactions, error)
 }
 
-func (s eventReactionRepoStub) EnsureSchema(context.Context) error {
-	return nil
-}
-
 func (s eventReactionRepoStub) Put(
 	ctx context.Context,
 	eventID, userID string,

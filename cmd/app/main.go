@@ -78,28 +78,13 @@ func main() {
 		logger.Fatalf("mongo ping failed: %v", err)
 	}
 
-	systemCassandraSession, err := createCassandraSession(cfg, "system")
-	if err != nil {
-		logger.Fatalf("cassandra system session failed: %v", err)
-	}
-	defer systemCassandraSession.Close()
-
-	if err := ensureCassandraKeyspace(context.Background(), systemCassandraSession, cfg.CassandraKeyspace); err != nil {
-		logger.Fatalf("ensure cassandra keyspace failed: %v", err)
-	}
-
 	cassandraSession, err := createCassandraSession(cfg, cfg.CassandraKeyspace)
 	if err != nil {
 		logger.Fatalf("cassandra keyspace session failed: %v", err)
 	}
 	defer cassandraSession.Close()
 
-	reactionRepo := repository.NewCassandraEventReactionRepository(systemCassandraSession, cassandraSession, cfg.CassandraKeyspace)
-	schemaCtx, schemaCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer schemaCancel()
-	if err := reactionRepo.EnsureSchema(schemaCtx); err != nil {
-		logger.Fatalf("ensure cassandra schema failed: %v", err)
-	}
+	reactionRepo := repository.NewCassandraEventReactionRepository(cassandraSession)
 
 	mongoDB := mongoClient.Database(cfg.MongoDatabase)
 	userRepo := repository.NewMongoUserRepository(mongoDB)
@@ -264,19 +249,6 @@ func createCassandraSession(cfg config.Config, keyspace string) (*gocql.Session,
 	}
 
 	return nil, fmt.Errorf("create cassandra session: %w", lastErr)
-}
-
-func ensureCassandraKeyspace(ctx context.Context, session *gocql.Session, keyspace string) error {
-	query := fmt.Sprintf(
-		`CREATE KEYSPACE IF NOT EXISTS %s WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}`,
-		keyspace,
-	)
-
-	if err := session.Query(query).WithContext(ctx).Exec(); err != nil {
-		return fmt.Errorf("create cassandra keyspace: %w", err)
-	}
-
-	return nil
 }
 
 func parseCassandraConsistency(value string) (gocql.Consistency, error) {

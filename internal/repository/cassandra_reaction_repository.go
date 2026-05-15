@@ -17,58 +17,14 @@ const (
 
 // CassandraEventReactionRepository stores event reactions in Cassandra.
 type CassandraEventReactionRepository struct {
-	systemSession *gocql.Session
-	session       *gocql.Session
-	keyspace      string
+	session *gocql.Session
 }
 
 // NewCassandraEventReactionRepository creates a reaction repository backed by Cassandra.
-func NewCassandraEventReactionRepository(
-	systemSession *gocql.Session,
-	keyspaceSession *gocql.Session,
-	keyspace string,
-) *CassandraEventReactionRepository {
+func NewCassandraEventReactionRepository(session *gocql.Session) *CassandraEventReactionRepository {
 	return &CassandraEventReactionRepository{
-		systemSession: systemSession,
-		session:       keyspaceSession,
-		keyspace:      keyspace,
+		session: session,
 	}
-}
-
-// EnsureSchema creates keyspace, table, and supporting indexes.
-func (r *CassandraEventReactionRepository) EnsureSchema(ctx context.Context) error {
-	createKeyspaceQuery := fmt.Sprintf(
-		`CREATE KEYSPACE IF NOT EXISTS %s WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}`,
-		r.keyspace,
-	)
-	if err := r.systemSession.Query(createKeyspaceQuery).WithContext(ctx).Exec(); err != nil {
-		return fmt.Errorf("create keyspace: %w", err)
-	}
-
-	createTableQuery := fmt.Sprintf(
-		`CREATE TABLE IF NOT EXISTS %s (
-			event_id text,
-			created_by text,
-			like_value tinyint,
-			created_at timestamp,
-			PRIMARY KEY ((event_id), created_by)
-		)`,
-		cassandraReactionTableName,
-	)
-	if err := r.session.Query(createTableQuery).WithContext(ctx).Exec(); err != nil {
-		return fmt.Errorf("create table: %w", err)
-	}
-
-	createLikeValueIndexQuery := fmt.Sprintf(
-		"CREATE INDEX IF NOT EXISTS %s_like_value_idx ON %s (like_value)",
-		cassandraReactionTableName,
-		cassandraReactionTableName,
-	)
-	if err := r.session.Query(createLikeValueIndexQuery).WithContext(ctx).Exec(); err != nil {
-		return fmt.Errorf("create like value index: %w", err)
-	}
-
-	return nil
 }
 
 // Put updates or creates user's reaction for a physical event occurrence.
