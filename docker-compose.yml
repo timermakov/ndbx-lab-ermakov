@@ -10,8 +10,8 @@ services:
     depends_on:
       redis:
         condition: service_started
-      cassandra:
-        condition: service_healthy
+      cassandra-init:
+        condition: service_completed_successfully
       mongo-cluster-init:
         condition: service_completed_successfully
     restart: unless-stopped
@@ -47,6 +47,21 @@ services:
       timeout: 10s
       retries: 12
       start_period: 60s
+
+  cassandra-init:
+    image: cassandra:latest
+    env_file:
+      - .env.local
+    depends_on:
+      cassandra:
+        condition: service_healthy
+    entrypoint:
+      - bash
+      - -lc
+      - "tr -d '\\r' < /scripts/cassandra-init.sh | bash"
+    volumes:
+      - ./cassandra-init.sh:/scripts/cassandra-init.sh:ro
+      - ./cassandra/init.cql:/scripts/init.cql:ro
 
   mongo-cfg1:
     image: mongo:7
