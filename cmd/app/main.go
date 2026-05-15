@@ -132,9 +132,9 @@ func main() {
 		Addr:         addr,
 		Handler:      mux,
 		ErrorLog:     logger,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 5 * time.Second,
-		IdleTimeout:  30 * time.Second,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 
 	listenErr := make(chan error, 1)
