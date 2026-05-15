@@ -2,6 +2,12 @@
 
 set -euo pipefail
 
+cass_home="${CASSANDRA_HOME:-/opt/cassandra}"
+if [[ -d "${cass_home}/bin" ]]; then
+  PATH="${cass_home}/bin:${PATH}"
+  export PATH
+fi
+
 if [[ -z "${CASSANDRA_HOSTS:-}" ]]; then
   echo "CASSANDRA_HOSTS is required"
   exit 1
@@ -29,7 +35,8 @@ if [[ -n "${CASSANDRA_USERNAME:-}" && -n "${CASSANDRA_PASSWORD:-}" ]]; then
 fi
 
 for attempt in $(seq 1 30); do
-  if cqlsh "${cassandra_host}" "${CASSANDRA_PORT}" "${auth_args[@]}" -e "DESCRIBE KEYSPACES" >/dev/null 2>&1; then
+  # stdin must not be the script pipe (see docker-compose tr|bash); cqlsh would consume the rest of the script.
+  if cqlsh "${cassandra_host}" "${CASSANDRA_PORT}" "${auth_args[@]}" -e "DESCRIBE KEYSPACES" >/dev/null 2>&1 </dev/null; then
     break
   fi
 
@@ -41,5 +48,5 @@ for attempt in $(seq 1 30); do
   sleep 2
 done
 
-sed "s/__CASSANDRA_KEYSPACE__/${CASSANDRA_KEYSPACE}/g" /scripts/init.cql > /tmp/cassandra-init.cql
-cqlsh "${cassandra_host}" "${CASSANDRA_PORT}" "${auth_args[@]}" -f /tmp/cassandra-init.cql
+tr -d '\r' < /scripts/init.cql | sed "s/__CASSANDRA_KEYSPACE__/${CASSANDRA_KEYSPACE}/g" > /tmp/cassandra-init.cql
+cqlsh "${cassandra_host}" "${CASSANDRA_PORT}" "${auth_args[@]}" -f /tmp/cassandra-init.cql </dev/null
