@@ -76,3 +76,15 @@ func hasIncludeReactions(r *http.Request) bool {
 
 	return false
 }
+
+func hasIncludeReviews(r *http.Request) bool {
+	for _, includeValue := range r.URL.Query()["include"] {
+		for _, token := range strings.Split(includeValue, ",") {
+			if strings.TrimSpace(strings.ToLower(token)) == "reviews" {
+				return true
+			}
+		}
+	}
+
+	return false
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -16,10 +17,12 @@ import (
 
 // EventService implements event business logic.
 type EventService struct {
-	events    repository.EventRepository
-	users     repository.UserRepository
-	reactions repository.EventReactionRepository
-	cache     repository.EventReactionCache
+	events      repository.EventRepository
+	users       repository.UserRepository
+	reactions   repository.EventReactionRepository
+	cache       repository.EventReactionCache
+	reviews     repository.EventReviewRepository
+	reviewCache repository.EventReviewCache
 }
 
 // NewEventService creates a new EventService.
@@ -37,6 +40,15 @@ func (s *EventService) SetReactionsStorage(
 ) {
 	s.reactions = reactions
 	s.cache = cache
+}
+
+// SetReviewsStorage configures reviews persistence and cache dependencies.
+func (s *EventService) SetReviewsStorage(
+	reviews repository.EventReviewRepository,
+	cache repository.EventReviewCache,
+) {
+	s.reviews = reviews
+	s.reviewCache = cache
 }
 
 // CreateEventInput is input data for event creation.
@@ -70,6 +82,20 @@ type UpdateEventInput struct {
 	Price    *uint64
 	City     *string
 	HasCity  bool
+}
+
+// EventReviewsQuery holds GET /events/{id}/reviews query parameters.
+type EventReviewsQuery struct {
+	Limit  string
+	Offset string
+}
+
+// UpdateEventReviewInput stores mutable review fields.
+type UpdateEventReviewInput struct {
+	Comment    *string
+	HasComment bool
+	Rating     *int
+	HasRating  bool
 }
 
 // ValidateListQuery validates and converts list query parameters.
@@ -353,6 +379,261 @@ func (s *EventService) BuildReactionsByTitle(
 	return reactionsByTitle, nil
 }
 
+// ValidateReviewsListQuery validates and converts reviews list query parameters.
+func (s *EventService) ValidateReviewsListQuery(query EventReviewsQuery) (uint64, uint64, string, error) {
+	var limit uint64
+	if strings.TrimSpace(query.Limit) != "" {
+		parsedLimit, err := strconv.ParseUint(strings.TrimSpace(query.Limit), 10, 64)
+		if err != nil {
+			return 0, 0, "limit", ErrInvalidParameter
+		}
+		limit = parsedLimit
+	}
+
+	var offset uint64
+	if strings.TrimSpace(query.Offset) != "" {
+		parsedOffset, err := strconv.ParseUint(strings.TrimSpace(query.Offset), 10, 64)
+		if err != nil {
+			return 0, 0, "offset", ErrInvalidParameter
+		}
+		offset = parsedOffset
+	}
+
+	return limit, offset, "", nil
+}
+
+// CreateReview validates and stores a new event review.
+func (s *EventService) CreateReview(
+	ctx context.Context,
+	eventID, userID, comment string,
+	rating int,
+	now time.Time,
+) (model.EventReview, string, error) {
+	if s.reviews == nil || s.reviewCache == nil {
+		return model.EventReview{}, "", fmt.Errorf("review storage is not configured")
+	}
+
+	trimmedEventID := strings.TrimSpace(eventID)
+	if trimmedEventID == "" {
+		return model.EventReview{}, "event_id", ErrInvalidField
+	}
+
+	if strings.TrimSpace(userID) == "" {
+		return model.EventReview{}, "user_id", ErrInvalidField
+	}
+
+	trimmedComment := strings.TrimSpace(comment)
+	if trimmedComment == "" {
+		return model.EventReview{}, "comment", ErrInvalidField
+	}
+	if len([]rune(trimmedComment)) > 300 {
+		return model.EventReview{}, "comment", ErrInvalidField
+	}
+	if rating < 1 || rating > 5 {
+		return model.EventReview{}, "rating", ErrInvalidField
+	}
+
+	event, err := s.GetByID(ctx, trimmedEventID)
+	if err != nil {
+		return model.EventReview{}, "", err
+	}
+
+	review, err := s.reviews.Create(ctx, trimmedEventID, strings.TrimSpace(userID), trimmedComment, rating, now)
+	if err != nil {
+		if errors.Is(err, repository.ErrAlreadyExists) {
+			return model.EventReview{}, "", ErrAlreadyExists
+		}
+		return model.EventReview{}, "", fmt.Errorf("create review: %w", err)
+	}
+
+	if err := s.reviewCache.DeleteByTitle(ctx, event.Title); err != nil {
+		return model.EventReview{}, "", fmt.Errorf("invalidate reviews cache: %w", err)
+	}
+	if _, err := s.BuildReviewsByTitle(ctx, []model.Event{event}); err != nil {
+		return model.EventReview{}, "", fmt.Errorf("refresh reviews cache: %w", err)
+	}
+
+	return review, "", nil
+}
+
+// ListReviews returns event reviews with pagination.
+func (s *EventService) ListReviews(
+	ctx context.Context,
+	eventID string,
+	limit, offset uint64,
+) ([]model.EventReview, error) {
+	if s.reviews == nil {
+		return []model.EventReview{}, nil
+	}
+
+	trimmedEventID := strings.TrimSpace(eventID)
+	if trimmedEventID == "" {
+		return nil, ErrNotFound
+	}
+
+	reviews, err := s.reviews.ListByEventID(ctx, trimmedEventID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list event reviews: %w", err)
+	}
+
+	return reviews, nil
+}
+
+// UpdateReview updates user review for event.
+func (s *EventService) UpdateReview(
+	ctx context.Context,
+	eventID, reviewID, userID string,
+	input UpdateEventReviewInput,
+	now time.Time,
+) (string, error) {
+	if s.reviews == nil || s.reviewCache == nil {
+		return "", fmt.Errorf("review storage is not configured")
+	}
+
+	trimmedEventID := strings.TrimSpace(eventID)
+	trimmedReviewID := strings.TrimSpace(reviewID)
+	trimmedUserID := strings.TrimSpace(userID)
+	if trimmedEventID == "" || trimmedReviewID == "" || trimmedUserID == "" {
+		return "", ErrNotFound
+	}
+
+	event, err := s.GetByID(ctx, trimmedEventID)
+	if err != nil {
+		return "", err
+	}
+
+	review, err := s.reviews.GetByEventIDAndUserID(ctx, trimmedEventID, trimmedUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return "", ErrNotFound
+		}
+		return "", fmt.Errorf("get user review: %w", err)
+	}
+	if review.ID != trimmedReviewID {
+		return "", ErrNotFound
+	}
+
+	if input.HasComment {
+		if input.Comment == nil {
+			return "comment", ErrInvalidField
+		}
+		trimmedComment := strings.TrimSpace(*input.Comment)
+		if trimmedComment == "" || len([]rune(trimmedComment)) > 300 {
+			return "comment", ErrInvalidField
+		}
+		review.Comment = trimmedComment
+	}
+
+	if input.HasRating {
+		if input.Rating == nil {
+			return "rating", ErrInvalidField
+		}
+		if *input.Rating < 1 || *input.Rating > 5 {
+			return "rating", ErrInvalidField
+		}
+		review.Rating = *input.Rating
+	}
+
+	review.UpdatedAt = now.UTC().Format(time.RFC3339)
+	if err := s.reviews.Update(ctx, review); err != nil {
+		return "", fmt.Errorf("update review: %w", err)
+	}
+
+	if err := s.reviewCache.DeleteByTitle(ctx, event.Title); err != nil {
+		return "", fmt.Errorf("invalidate reviews cache: %w", err)
+	}
+	if _, err := s.BuildReviewsByTitle(ctx, []model.Event{event}); err != nil {
+		return "", fmt.Errorf("refresh reviews cache: %w", err)
+	}
+
+	return "", nil
+}
+
+// BuildReviewsByTitle returns aggregated review counters for event titles from input list.
+func (s *EventService) BuildReviewsByTitle(
+	ctx context.Context,
+	events []model.Event,
+) (map[string]model.EventReviewsSummary, error) {
+	if s.reviews == nil || s.reviewCache == nil {
+		return map[string]model.EventReviewsSummary{}, nil
+	}
+
+	targetTitles := make(map[string]struct{}, len(events))
+	for _, event := range events {
+		title := strings.TrimSpace(event.Title)
+		if title == "" {
+			continue
+		}
+		targetTitles[title] = struct{}{}
+	}
+	if len(targetTitles) == 0 {
+		return map[string]model.EventReviewsSummary{}, nil
+	}
+
+	allEvents, err := s.events.List(ctx, repository.EventFilter{})
+	if err != nil {
+		return nil, fmt.Errorf("list events for reviews aggregation: %w", err)
+	}
+
+	eventIDsByTitle := make(map[string][]string, len(targetTitles))
+	for _, event := range allEvents {
+		title := strings.TrimSpace(event.Title)
+		if _, ok := targetTitles[title]; !ok {
+			continue
+		}
+
+		eventIDsByTitle[title] = append(eventIDsByTitle[title], event.ID)
+	}
+
+	reviewsByTitle := make(map[string]model.EventReviewsSummary, len(targetTitles))
+	for title := range targetTitles {
+		cachedReviews, found, cacheErr := s.reviewCache.GetByTitle(ctx, title)
+		if cacheErr != nil {
+			return nil, fmt.Errorf("read reviews cache by title %q: %w", title, cacheErr)
+		}
+		if found {
+			reviewsByTitle[title] = cachedReviews
+			continue
+		}
+
+		eventIDs := eventIDsByTitle[title]
+		if len(eventIDs) == 0 {
+			reviewsByTitle[title] = model.EventReviewsSummary{}
+			continue
+		}
+
+		countersByEventID, countErr := s.reviews.CountByEventIDs(ctx, eventIDs)
+		if countErr != nil {
+			return nil, fmt.Errorf("count reviews by event ids: %w", countErr)
+		}
+
+		summary := model.EventReviewsSummary{}
+		var totalRating uint64
+		for _, eventID := range eventIDs {
+			counters, ok := countersByEventID[eventID]
+			if !ok {
+				continue
+			}
+			summary.Count += counters.Count
+			totalRating += counters.TotalRating
+		}
+		if summary.Count > 0 {
+			summary.Rating = roundToOne(float64(totalRating) / float64(summary.Count))
+		}
+
+		reviewsByTitle[title] = summary
+		if summary.Count == 0 {
+			continue
+		}
+
+		if setErr := s.reviewCache.SetByTitle(ctx, title, summary); setErr != nil {
+			return nil, fmt.Errorf("cache reviews by title %q: %w", title, setErr)
+		}
+	}
+
+	return reviewsByTitle, nil
+}
+
 // UpdateByOrganizer updates event fields for event organizer.
 func (s *EventService) UpdateByOrganizer(
 	ctx context.Context,
@@ -407,6 +688,10 @@ func (s *EventService) UpdateByOrganizer(
 // e.g. 20060102 -> 01/02 03:04:05PM 2006 -0700.
 func parseYYYYMMDD(value string) (time.Time, error) {
 	return time.Parse("20060102", value)
+}
+
+func roundToOne(value float64) float64 {
+	return math.Round(value*10) / 10
 }
 
 func isValidCategory(value string) bool {
