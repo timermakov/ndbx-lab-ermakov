@@ -13,6 +13,7 @@ type Config struct {
 	AppPort              string
 	AppUserSessionTTL    int
 	AppLikeTTL           int
+	AppEventReviewsTTL   int
 	RedisHost            string
 	RedisPort            string
 	RedisPassword        string
@@ -37,6 +38,10 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	appLikeTTL, err := requiredInt("APP_LIKE_TTL")
+	if err != nil {
+		return Config{}, err
+	}
+	appEventReviewsTTL, err := requiredInt("APP_EVENT_REVIEWS_TTL")
 	if err != nil {
 		return Config{}, err
 	}
@@ -112,6 +117,7 @@ func Load() (Config, error) {
 		AppPort:              appPort,
 		AppUserSessionTTL:    appTTL,
 		AppLikeTTL:           appLikeTTL,
+		AppEventReviewsTTL:   appEventReviewsTTL,
 		RedisHost:            redisHost,
 		RedisPort:            redisPort,
 		RedisPassword:        optionalString("REDIS_PASSWORD"),
