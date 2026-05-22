@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/timermakov/ndbx-lab-ermakov/internal/model"
 	"github.com/timermakov/ndbx-lab-ermakov/internal/service"
 	"github.com/timermakov/ndbx-lab-ermakov/internal/session"
 )
@@ -236,9 +237,27 @@ func (h *UsersHandler) ListEvents(w http.ResponseWriter, r *http.Request) {
 
 	h.touchExistingSessionIfPossible(w, r)
 
+	includeReactions := hasIncludeReactions(r)
+	reactionsByTitle := map[string]model.EventReactions{}
+	if includeReactions {
+		reactions, reactionsErr := h.events.BuildReactionsByTitle(r.Context(), events)
+		if reactionsErr != nil {
+			log.Printf("users events reactions: %v", reactionsErr)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		reactionsByTitle = reactions
+	}
+
 	responseEvents := make([]any, 0, len(events))
 	for _, event := range events {
-		responseEvents = append(responseEvents, eventToResponse(event))
+		var reactions *model.EventReactions
+		if includeReactions {
+			value := reactionsByTitle[event.Title]
+			reactions = &value
+		}
+
+		responseEvents = append(responseEvents, eventToResponse(event, reactions))
 	}
 
 	writeJSON(w, http.StatusOK, eventsResponse{

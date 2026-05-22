@@ -16,8 +16,10 @@ import (
 
 // EventService implements event business logic.
 type EventService struct {
-	events repository.EventRepository
-	users  repository.UserRepository
+	events    repository.EventRepository
+	users     repository.UserRepository
+	reactions repository.EventReactionRepository
+	cache     repository.EventReactionCache
 }
 
 // NewEventService creates a new EventService.
@@ -26,6 +28,15 @@ func NewEventService(events repository.EventRepository, users repository.UserRep
 		events: events,
 		users:  users,
 	}
+}
+
+// SetReactionsStorage configures reactions persistence and cache dependencies.
+func (s *EventService) SetReactionsStorage(
+	reactions repository.EventReactionRepository,
+	cache repository.EventReactionCache,
+) {
+	s.reactions = reactions
+	s.cache = cache
 }
 
 // CreateEventInput is input data for event creation.
@@ -228,6 +239,118 @@ func (s *EventService) GetByID(ctx context.Context, id string) (model.Event, err
 	}
 
 	return event, nil
+}
+
+// PutReaction creates or updates user reaction for the event.
+func (s *EventService) PutReaction(
+	ctx context.Context,
+	eventID string,
+	userID string,
+	value model.ReactionValue,
+	now time.Time,
+) error {
+	if s.reactions == nil || s.cache == nil {
+		return fmt.Errorf("reaction storage is not configured")
+	}
+
+	event, err := s.GetByID(ctx, eventID)
+	if err != nil {
+		return err
+	}
+
+	if err := s.reactions.Put(ctx, strings.TrimSpace(eventID), strings.TrimSpace(userID), value, now); err != nil {
+		return fmt.Errorf("save reaction: %w", err)
+	}
+	if err := s.cache.DeleteByTitle(ctx, event.Title); err != nil {
+		return fmt.Errorf("invalidate reactions cache: %w", err)
+	}
+	if _, err := s.BuildReactionsByTitle(ctx, []model.Event{event}); err != nil {
+		return fmt.Errorf("refresh reactions cache: %w", err)
+	}
+
+	return nil
+}
+
+// BuildReactionsByTitle returns aggregated reactions for event titles from input list.
+func (s *EventService) BuildReactionsByTitle(
+	ctx context.Context,
+	events []model.Event,
+) (map[string]model.EventReactions, error) {
+	if s.reactions == nil || s.cache == nil {
+		return map[string]model.EventReactions{}, nil
+	}
+
+	targetTitles := make(map[string]struct{}, len(events))
+	for _, event := range events {
+		title := strings.TrimSpace(event.Title)
+		if title == "" {
+			continue
+		}
+		targetTitles[title] = struct{}{}
+	}
+	if len(targetTitles) == 0 {
+		return map[string]model.EventReactions{}, nil
+	}
+
+	allEvents, err := s.events.List(ctx, repository.EventFilter{})
+	if err != nil {
+		return nil, fmt.Errorf("list events for reactions aggregation: %w", err)
+	}
+
+	eventIDsByTitle := make(map[string][]string, len(targetTitles))
+	for _, event := range allEvents {
+		title := strings.TrimSpace(event.Title)
+		if _, ok := targetTitles[title]; !ok {
+			continue
+		}
+
+		eventIDsByTitle[title] = append(eventIDsByTitle[title], event.ID)
+	}
+
+	reactionsByTitle := make(map[string]model.EventReactions, len(targetTitles))
+	for title := range targetTitles {
+		cachedReactions, found, cacheErr := s.cache.GetByTitle(ctx, title)
+		if cacheErr != nil {
+			return nil, fmt.Errorf("read reactions cache by title %q: %w", title, cacheErr)
+		}
+		if found {
+			reactionsByTitle[title] = cachedReactions
+			continue
+		}
+
+		eventIDs := eventIDsByTitle[title]
+		if len(eventIDs) == 0 {
+			reactionsByTitle[title] = model.EventReactions{}
+			continue
+		}
+
+		reactionsByEventID, countErr := s.reactions.CountByEventIDs(ctx, eventIDs)
+		if countErr != nil {
+			return nil, fmt.Errorf("count reactions by event ids: %w", countErr)
+		}
+
+		aggregated := model.EventReactions{}
+		for _, eventID := range eventIDs {
+			eventReactions, ok := reactionsByEventID[eventID]
+			if !ok {
+				continue
+			}
+
+			aggregated.Likes += eventReactions.Likes
+			aggregated.Dislikes += eventReactions.Dislikes
+		}
+
+		reactionsByTitle[title] = aggregated
+		if aggregated.Likes == 0 && aggregated.Dislikes == 0 {
+			continue
+		}
+
+		if setErr := s.cache.SetByTitle(ctx, title, aggregated); setErr != nil {
+			return nil, fmt.Errorf("cache reactions by title %q: %w", title, setErr)
+		}
+	}
+
+	return reactionsByTitle, nil
 }
 
 // UpdateByOrganizer updates event fields for event organizer.
