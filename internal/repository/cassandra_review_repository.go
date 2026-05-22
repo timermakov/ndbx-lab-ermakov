@@ -40,6 +40,7 @@ func (r *CassandraEventReviewRepository) Create(
 		`INSERT INTO %s (event_id, created_by, id, rating, comment, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS`,
 		cassandraReviewTableName,
 	)
+	existing := map[string]interface{}{}
 	applied, err := r.session.Query(
 		query,
 		eventID,
@@ -49,7 +50,7 @@ func (r *CassandraEventReviewRepository) Create(
 		comment,
 		now.UTC(),
 		now.UTC(),
-	).WithContext(ctx).ScanCAS()
+	).WithContext(ctx).MapScanCAS(existing)
 	if err != nil {
 		return model.EventReview{}, fmt.Errorf("insert review: %w", err)
 	}
