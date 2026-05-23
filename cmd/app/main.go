@@ -85,11 +85,13 @@ func main() {
 	defer cassandraSession.Close()
 
 	reactionRepo := repository.NewCassandraEventReactionRepository(cassandraSession)
+	reviewRepo := repository.NewCassandraEventReviewRepository(cassandraSession)
 
 	mongoDB := mongoClient.Database(cfg.MongoDatabase)
 	userRepo := repository.NewMongoUserRepository(mongoDB)
 	eventRepo := repository.NewMongoEventRepository(mongoDB)
 	reactionCache := repository.NewRedisEventReactionCache(redisClient, time.Duration(cfg.AppLikeTTL)*time.Second)
+	reviewCache := repository.NewRedisEventReviewCache(redisClient, time.Duration(cfg.AppEventReviewsTTL)*time.Second)
 
 	indexCtx, indexCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer indexCancel()
@@ -104,6 +106,7 @@ func main() {
 	userService := service.NewUserService(userRepo)
 	eventService := service.NewEventService(eventRepo, userRepo)
 	eventService.SetReactionsStorage(reactionRepo, reactionCache)
+	eventService.SetReviewsStorage(reviewRepo, reviewCache)
 
 	usersHandler := handler.NewUsersHandler(userService, eventService, store, cfg.AppUserSessionTTL)
 	authHandler := handler.NewAuthHandler(userService, store, cfg.AppUserSessionTTL)
@@ -123,6 +126,9 @@ func main() {
 	mux.HandleFunc("GET /events/{id}", eventsHandler.GetByID)
 	mux.HandleFunc("POST /events/{id}/like", eventsHandler.Like)
 	mux.HandleFunc("POST /events/{id}/dislike", eventsHandler.Dislike)
+	mux.HandleFunc("POST /events/{id}/reviews", eventsHandler.CreateReview)
+	mux.HandleFunc("GET /events/{id}/reviews", eventsHandler.ListReviews)
+	mux.HandleFunc("PATCH /events/{id}/reviews/{review_id}", eventsHandler.PatchReview)
 	mux.HandleFunc("PATCH /events/{id}", eventsHandler.Patch)
 	mux.Handle("GET /swagger/", httpSwagger.Handler(
 		httpSwagger.URL("/swagger/doc.json"),

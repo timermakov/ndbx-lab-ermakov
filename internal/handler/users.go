@@ -238,6 +238,7 @@ func (h *UsersHandler) ListEvents(w http.ResponseWriter, r *http.Request) {
 	h.touchExistingSessionIfPossible(w, r)
 
 	includeReactions := hasIncludeReactions(r)
+	includeReviews := hasIncludeReviews(r)
 	reactionsByTitle := map[string]model.EventReactions{}
 	if includeReactions {
 		reactions, reactionsErr := h.events.BuildReactionsByTitle(r.Context(), events)
@@ -248,6 +249,16 @@ func (h *UsersHandler) ListEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		reactionsByTitle = reactions
 	}
+	reviewsByTitle := map[string]model.EventReviewsSummary{}
+	if includeReviews {
+		reviews, reviewsErr := h.events.BuildReviewsByTitle(r.Context(), events)
+		if reviewsErr != nil {
+			log.Printf("users events reviews: %v", reviewsErr)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		reviewsByTitle = reviews
+	}
 
 	responseEvents := make([]any, 0, len(events))
 	for _, event := range events {
@@ -256,8 +267,13 @@ func (h *UsersHandler) ListEvents(w http.ResponseWriter, r *http.Request) {
 			value := reactionsByTitle[event.Title]
 			reactions = &value
 		}
+		var reviews *model.EventReviewsSummary
+		if includeReviews {
+			value := reviewsByTitle[event.Title]
+			reviews = &value
+		}
 
-		responseEvents = append(responseEvents, eventToResponse(event, reactions))
+		responseEvents = append(responseEvents, eventToResponse(event, reactions, reviews))
 	}
 
 	writeJSON(w, http.StatusOK, eventsResponse{

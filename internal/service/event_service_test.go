@@ -132,6 +132,96 @@ func (s eventReactionCacheStub) SetByTitle(ctx context.Context, title string, re
 	return nil
 }
 
+type eventReviewRepoStub struct {
+	createFn                func(ctx context.Context, eventID, userID, comment string, rating int, now time.Time) (model.EventReview, error)
+	getByEventIDAndUserIDFn func(ctx context.Context, eventID, userID string) (model.EventReview, error)
+	listByEventIDFn         func(ctx context.Context, eventID string, limit, offset uint64) ([]model.EventReview, error)
+	updateFn                func(ctx context.Context, review model.EventReview) error
+	countByEventIDsFn       func(ctx context.Context, eventIDs []string) (map[string]model.EventReviewsCounters, error)
+}
+
+func (s eventReviewRepoStub) Create(
+	ctx context.Context,
+	eventID, userID, comment string,
+	rating int,
+	now time.Time,
+) (model.EventReview, error) {
+	if s.createFn != nil {
+		return s.createFn(ctx, eventID, userID, comment, rating, now)
+	}
+
+	return model.EventReview{}, nil
+}
+
+func (s eventReviewRepoStub) GetByEventIDAndUserID(ctx context.Context, eventID, userID string) (model.EventReview, error) {
+	if s.getByEventIDAndUserIDFn != nil {
+		return s.getByEventIDAndUserIDFn(ctx, eventID, userID)
+	}
+
+	return model.EventReview{}, repository.ErrNotFound
+}
+
+func (s eventReviewRepoStub) ListByEventID(
+	ctx context.Context,
+	eventID string,
+	limit, offset uint64,
+) ([]model.EventReview, error) {
+	if s.listByEventIDFn != nil {
+		return s.listByEventIDFn(ctx, eventID, limit, offset)
+	}
+
+	return []model.EventReview{}, nil
+}
+
+func (s eventReviewRepoStub) Update(ctx context.Context, review model.EventReview) error {
+	if s.updateFn != nil {
+		return s.updateFn(ctx, review)
+	}
+
+	return nil
+}
+
+func (s eventReviewRepoStub) CountByEventIDs(
+	ctx context.Context,
+	eventIDs []string,
+) (map[string]model.EventReviewsCounters, error) {
+	if s.countByEventIDsFn != nil {
+		return s.countByEventIDsFn(ctx, eventIDs)
+	}
+
+	return map[string]model.EventReviewsCounters{}, nil
+}
+
+type eventReviewCacheStub struct {
+	getByTitleFn    func(ctx context.Context, title string) (model.EventReviewsSummary, bool, error)
+	setByTitleFn    func(ctx context.Context, title string, reviews model.EventReviewsSummary) error
+	deleteByTitleFn func(ctx context.Context, title string) error
+}
+
+func (s eventReviewCacheStub) GetByTitle(ctx context.Context, title string) (model.EventReviewsSummary, bool, error) {
+	if s.getByTitleFn != nil {
+		return s.getByTitleFn(ctx, title)
+	}
+
+	return model.EventReviewsSummary{}, false, nil
+}
+
+func (s eventReviewCacheStub) SetByTitle(ctx context.Context, title string, reviews model.EventReviewsSummary) error {
+	if s.setByTitleFn != nil {
+		return s.setByTitleFn(ctx, title, reviews)
+	}
+
+	return nil
+}
+
+func (s eventReviewCacheStub) DeleteByTitle(ctx context.Context, title string) error {
+	if s.deleteByTitleFn != nil {
+		return s.deleteByTitleFn(ctx, title)
+	}
+
+	return nil
+}
+
 func (s eventReactionCacheStub) DeleteByTitle(ctx context.Context, title string) error {
 	if s.deleteByTitleFn != nil {
 		return s.deleteByTitleFn(ctx, title)
@@ -317,5 +407,136 @@ func TestEventServiceBuildReactionsByTitle(t *testing.T) {
 	reactions := reactionsByTitle["The Event"]
 	if reactions.Likes != 3 || reactions.Dislikes != 1 {
 		t.Fatalf("unexpected reactions result: %+v", reactions)
+	}
+}
+
+func TestEventServiceCreateReviewConflict(t *testing.T) {
+	t.Parallel()
+
+	svc := service.NewEventService(eventRepoStub{
+		getByIDFn: func(context.Context, string) (model.Event, error) {
+			return model.Event{ID: "event-1", Title: "The Event"}, nil
+		},
+	}, eventUserRepoStub{})
+	svc.SetReviewsStorage(
+		eventReviewRepoStub{
+			createFn: func(context.Context, string, string, string, int, time.Time) (model.EventReview, error) {
+				return model.EventReview{}, repository.ErrAlreadyExists
+			},
+		},
+		eventReviewCacheStub{},
+	)
+
+	_, _, err := svc.CreateReview(context.Background(), "event-1", "user-1", "good", 5, time.Now())
+	if !errors.Is(err, service.ErrAlreadyExists) {
+		t.Fatalf("expected ErrAlreadyExists, got %v", err)
+	}
+}
+
+func TestEventServiceBuildReviewsByTitle(t *testing.T) {
+	t.Parallel()
+
+	svc := service.NewEventService(eventRepoStub{
+		listFn: func(_ context.Context, _ repository.EventFilter) ([]model.Event, error) {
+			return []model.Event{
+				{ID: "event-1", Title: "The Event"},
+				{ID: "event-2", Title: "The Event"},
+				{ID: "event-3", Title: "Other Event"},
+			}, nil
+		},
+	}, eventUserRepoStub{})
+
+	svc.SetReviewsStorage(
+		eventReviewRepoStub{
+			countByEventIDsFn: func(_ context.Context, eventIDs []string) (map[string]model.EventReviewsCounters, error) {
+				if len(eventIDs) != 2 {
+					t.Fatalf("unexpected event ids count: %d", len(eventIDs))
+				}
+
+				return map[string]model.EventReviewsCounters{
+					"event-1": {Count: 2, TotalRating: 7},
+					"event-2": {Count: 1, TotalRating: 2},
+				}, nil
+			},
+		},
+		eventReviewCacheStub{
+			getByTitleFn: func(_ context.Context, title string) (model.EventReviewsSummary, bool, error) {
+				if title != "The Event" {
+					t.Fatalf("unexpected cache lookup title: %q", title)
+				}
+				return model.EventReviewsSummary{}, false, nil
+			},
+			setByTitleFn: func(_ context.Context, title string, reviews model.EventReviewsSummary) error {
+				if title != "The Event" {
+					t.Fatalf("unexpected cache set title: %q", title)
+				}
+				if reviews.Count != 3 || reviews.Rating != 3 {
+					t.Fatalf("unexpected cached reviews: %+v", reviews)
+				}
+				return nil
+			},
+		},
+	)
+
+	reviewsByTitle, err := svc.BuildReviewsByTitle(context.Background(), []model.Event{{ID: "event-1", Title: "The Event"}})
+	if err != nil {
+		t.Fatalf("build reviews failed: %v", err)
+	}
+
+	reviews := reviewsByTitle["The Event"]
+	if reviews.Count != 3 || reviews.Rating != 3 {
+		t.Fatalf("unexpected reviews result: %+v", reviews)
+	}
+}
+
+func TestEventServiceUpdateReviewByOwner(t *testing.T) {
+	t.Parallel()
+
+	var updated model.EventReview
+	svc := service.NewEventService(eventRepoStub{
+		getByIDFn: func(context.Context, string) (model.Event, error) {
+			return model.Event{ID: "event-1", Title: "The Event"}, nil
+		},
+	}, eventUserRepoStub{})
+	svc.SetReviewsStorage(
+		eventReviewRepoStub{
+			getByEventIDAndUserIDFn: func(context.Context, string, string) (model.EventReview, error) {
+				return model.EventReview{
+					ID:        "review-1",
+					EventID:   "event-1",
+					Comment:   "old",
+					CreatedBy: "user-1",
+					Rating:    2,
+					UpdatedAt: "2026-01-01T00:00:00Z",
+				}, nil
+			},
+			updateFn: func(_ context.Context, review model.EventReview) error {
+				updated = review
+				return nil
+			},
+		},
+		eventReviewCacheStub{},
+	)
+
+	comment := "new"
+	rating := 5
+	_, err := svc.UpdateReview(
+		context.Background(),
+		"event-1",
+		"review-1",
+		"user-1",
+		service.UpdateEventReviewInput{
+			Comment:    &comment,
+			HasComment: true,
+			Rating:     &rating,
+			HasRating:  true,
+		},
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("update review failed: %v", err)
+	}
+	if updated.Comment != "new" || updated.Rating != 5 {
+		t.Fatalf("unexpected updated review: %+v", updated)
 	}
 }

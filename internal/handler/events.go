@@ -141,6 +141,7 @@ func (h *EventsHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	includeReactions := hasIncludeReactions(r)
+	includeReviews := hasIncludeReviews(r)
 	reactionsByTitle := map[string]model.EventReactions{}
 	if includeReactions {
 		reactions, reactionsErr := h.events.BuildReactionsByTitle(r.Context(), events)
@@ -151,6 +152,16 @@ func (h *EventsHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 		reactionsByTitle = reactions
 	}
+	reviewsByTitle := map[string]model.EventReviewsSummary{}
+	if includeReviews {
+		reviews, reviewsErr := h.events.BuildReviewsByTitle(r.Context(), events)
+		if reviewsErr != nil {
+			log.Printf("events list reviews: %v", reviewsErr)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		reviewsByTitle = reviews
+	}
 
 	responseEvents := make([]any, 0, len(events))
 	for _, event := range events {
@@ -159,8 +170,13 @@ func (h *EventsHandler) List(w http.ResponseWriter, r *http.Request) {
 			value := reactionsByTitle[event.Title]
 			reactions = &value
 		}
+		var reviews *model.EventReviewsSummary
+		if includeReviews {
+			value := reviewsByTitle[event.Title]
+			reviews = &value
+		}
 
-		responseEvents = append(responseEvents, eventToResponse(event, reactions))
+		responseEvents = append(responseEvents, eventToResponse(event, reactions, reviews))
 	}
 
 	writeJSON(w, http.StatusOK, eventsResponse{
@@ -192,6 +208,7 @@ func (h *EventsHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var reactions *model.EventReactions
+	var reviews *model.EventReviewsSummary
 	if hasIncludeReactions(r) {
 		reactionsByTitle, reactionsErr := h.events.BuildReactionsByTitle(r.Context(), []model.Event{event})
 		if reactionsErr != nil {
@@ -203,8 +220,18 @@ func (h *EventsHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 		value := reactionsByTitle[event.Title]
 		reactions = &value
 	}
+	if hasIncludeReviews(r) {
+		reviewsByTitle, reviewsErr := h.events.BuildReviewsByTitle(r.Context(), []model.Event{event})
+		if reviewsErr != nil {
+			log.Printf("events get by id reviews: %v", reviewsErr)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		value := reviewsByTitle[event.Title]
+		reviews = &value
+	}
 
-	writeJSON(w, http.StatusOK, eventToResponse(event, reactions))
+	writeJSON(w, http.StatusOK, eventToResponse(event, reactions, reviews))
 }
 
 // Like handles POST /events/{id}/like.
@@ -269,6 +296,173 @@ func (h *EventsHandler) Dislike(w http.ResponseWriter, r *http.Request) {
 
 	if _, touchErr := h.sessions.Touch(r.Context(), sessionID, time.Now()); touchErr != nil {
 		log.Printf("events dislike touch session: %v", touchErr)
+	}
+	setSessionCookieWithMaxAge(w, sessionID, h.ttlSeconds)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// CreateReview handles POST /events/{id}/reviews.
+func (h *EventsHandler) CreateReview(w http.ResponseWriter, r *http.Request) {
+	type createReviewRequest struct {
+		Comment *string `json:"comment"`
+		Rating  *int    `json:"rating"`
+	}
+	type createReviewResponse struct {
+		ID string `json:"id"`
+	}
+
+	sessionID, sessionData, ok, err := h.requireSession(r)
+	if err != nil {
+		log.Printf("events create review session check: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	if !ok || sessionData.UserID == "" {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
+	var req createReviewRequest
+	if decodeErr := json.NewDecoder(r.Body).Decode(&req); decodeErr != nil {
+		setSessionCookieWithMaxAge(w, sessionID, h.ttlSeconds)
+		writeJSON(w, http.StatusBadRequest, errorResponse{Message: `invalid "body" field`})
+		return
+	}
+	if req.Comment == nil {
+		setSessionCookieWithMaxAge(w, sessionID, h.ttlSeconds)
+		writeJSON(w, http.StatusBadRequest, errorResponse{Message: `invalid "comment" field`})
+		return
+	}
+	if req.Rating == nil {
+		setSessionCookieWithMaxAge(w, sessionID, h.ttlSeconds)
+		writeJSON(w, http.StatusBadRequest, errorResponse{Message: `invalid "rating" field`})
+		return
+	}
+
+	review, invalidField, reviewErr := h.events.CreateReview(
+		r.Context(),
+		strings.TrimSpace(r.PathValue("id")),
+		sessionData.UserID,
+		*req.Comment,
+		*req.Rating,
+		time.Now(),
+	)
+	if reviewErr != nil {
+		switch {
+		case errors.Is(reviewErr, service.ErrInvalidField):
+			setSessionCookieWithMaxAge(w, sessionID, h.ttlSeconds)
+			writeJSON(w, http.StatusBadRequest, errorResponse{
+				Message: `invalid "` + invalidField + `" field`,
+			})
+		case errors.Is(reviewErr, service.ErrAlreadyExists):
+			setSessionCookieWithMaxAge(w, sessionID, h.ttlSeconds)
+			writeJSON(w, http.StatusConflict, errorResponse{Message: "Already exists"})
+		case errors.Is(reviewErr, service.ErrNotFound):
+			setSessionCookieWithMaxAge(w, sessionID, h.ttlSeconds)
+			writeJSON(w, http.StatusNotFound, errorResponse{Message: "Event not found"})
+		default:
+			log.Printf("events create review: %v", reviewErr)
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		return
+	}
+
+	if _, touchErr := h.sessions.Touch(r.Context(), sessionID, time.Now()); touchErr != nil {
+		log.Printf("events create review touch session: %v", touchErr)
+	}
+	setSessionCookieWithMaxAge(w, sessionID, h.ttlSeconds)
+	writeJSON(w, http.StatusCreated, createReviewResponse{ID: review.ID})
+}
+
+// ListReviews handles GET /events/{id}/reviews.
+func (h *EventsHandler) ListReviews(w http.ResponseWriter, r *http.Request) {
+	type listReviewsResponse struct {
+		Reviews []model.EventReview `json:"reviews"`
+		Count   int                 `json:"count"`
+	}
+
+	limit, offset, invalidParameter, err := h.events.ValidateReviewsListQuery(service.EventReviewsQuery{
+		Limit:  r.URL.Query().Get("limit"),
+		Offset: r.URL.Query().Get("offset"),
+	})
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidParameter) {
+			h.touchExistingSessionIfPossible(w, r)
+			writeJSON(w, http.StatusBadRequest, errorResponse{
+				Message: `invalid "` + invalidParameter + `" field`,
+			})
+			return
+		}
+		log.Printf("events list reviews query: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	reviews, listErr := h.events.ListReviews(r.Context(), strings.TrimSpace(r.PathValue("id")), limit, offset)
+	if listErr != nil {
+		log.Printf("events list reviews: %v", listErr)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	h.touchExistingSessionIfPossible(w, r)
+	writeJSON(w, http.StatusOK, listReviewsResponse{
+		Reviews: reviews,
+		Count:   len(reviews),
+	})
+}
+
+// PatchReview handles PATCH /events/{id}/reviews/{review_id}.
+func (h *EventsHandler) PatchReview(w http.ResponseWriter, r *http.Request) {
+	sessionID, sessionData, ok, err := h.requireSession(r)
+	if err != nil {
+		log.Printf("events patch review session check: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	if !ok || sessionData.UserID == "" {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
+	input, invalidField, decodeErr := decodeUpdateReviewRequest(r)
+	if decodeErr != nil {
+		setSessionCookieWithMaxAge(w, sessionID, h.ttlSeconds)
+		if invalidField == "" {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Message: `invalid "body" field`})
+			return
+		}
+		writeJSON(w, http.StatusBadRequest, errorResponse{Message: `invalid "` + invalidField + `" field`})
+		return
+	}
+
+	invalidField, updateErr := h.events.UpdateReview(
+		r.Context(),
+		strings.TrimSpace(r.PathValue("id")),
+		strings.TrimSpace(r.PathValue("review_id")),
+		sessionData.UserID,
+		input,
+		time.Now(),
+	)
+	if updateErr != nil {
+		switch {
+		case errors.Is(updateErr, service.ErrInvalidField):
+			setSessionCookieWithMaxAge(w, sessionID, h.ttlSeconds)
+			writeJSON(w, http.StatusBadRequest, errorResponse{
+				Message: `invalid "` + invalidField + `" field`,
+			})
+		case errors.Is(updateErr, service.ErrNotFound):
+			setSessionCookieWithMaxAge(w, sessionID, h.ttlSeconds)
+			writeJSON(w, http.StatusNotFound, errorResponse{Message: "Event not found"})
+		default:
+			log.Printf("events patch review: %v", updateErr)
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		return
+	}
+
+	if _, touchErr := h.sessions.Touch(r.Context(), sessionID, time.Now()); touchErr != nil {
+		log.Printf("events patch review touch session: %v", touchErr)
 	}
 	setSessionCookieWithMaxAge(w, sessionID, h.ttlSeconds)
 	w.WriteHeader(http.StatusNoContent)
@@ -394,7 +588,40 @@ func decodeUpdateEventRequest(r *http.Request) (service.UpdateEventInput, string
 	return input, "", nil
 }
 
-func eventToResponse(event model.Event, reactions *model.EventReactions) map[string]any {
+func decodeUpdateReviewRequest(r *http.Request) (service.UpdateEventReviewInput, string, error) {
+	var body map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		return service.UpdateEventReviewInput{}, "", err
+	}
+
+	input := service.UpdateEventReviewInput{}
+
+	if rawComment, ok := body["comment"]; ok {
+		input.HasComment = true
+		var comment string
+		if err := json.Unmarshal(rawComment, &comment); err != nil {
+			return service.UpdateEventReviewInput{}, "comment", err
+		}
+		input.Comment = &comment
+	}
+
+	if rawRating, ok := body["rating"]; ok {
+		input.HasRating = true
+		var rating int
+		if err := json.Unmarshal(rawRating, &rating); err != nil {
+			return service.UpdateEventReviewInput{}, "rating", err
+		}
+		input.Rating = &rating
+	}
+
+	return input, "", nil
+}
+
+func eventToResponse(
+	event model.Event,
+	reactions *model.EventReactions,
+	reviews *model.EventReviewsSummary,
+) map[string]any {
 	location := map[string]any{
 		"address": event.Location.Address,
 	}
@@ -418,6 +645,12 @@ func eventToResponse(event model.Event, reactions *model.EventReactions) map[str
 		response["reactions"] = map[string]uint64{
 			"likes":    reactions.Likes,
 			"dislikes": reactions.Dislikes,
+		}
+	}
+	if reviews != nil {
+		response["reviews"] = map[string]any{
+			"count":  reviews.Count,
+			"rating": reviews.Rating,
 		}
 	}
 
