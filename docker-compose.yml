@@ -29,14 +29,14 @@ services:
     env_file:
       - .env.local
     environment:
-      NEO4J_AUTH: "${NEO4J_USER}/${NEO4J_PASSWORD}"
+      NEO4J_AUTH: "${NEO4J_USERNAME}/${NEO4J_PASSWORD}"
     ports:
       - "${NEO4J_HTTP_PORT}:${NEO4J_HTTP_PORT}"
       - "${NEO4J_BOLT_PORT}:${NEO4J_BOLT_PORT}"
     mem_limit: "1g"
     mem_reservation: "512m"
     healthcheck:
-      test: ["CMD-SHELL", "cypher-shell -a bolt://localhost:${NEO4J_BOLT_PORT} -u ${NEO4J_USER} -p ${NEO4J_PASSWORD} \"RETURN 1;\""]
+      test: ["CMD-SHELL", "cypher-shell -a bolt://localhost:${NEO4J_BOLT_PORT} -u ${NEO4J_USERNAME} -p ${NEO4J_PASSWORD} \"RETURN 1;\""]
       interval: 20s
       timeout: 10s
       retries: 12

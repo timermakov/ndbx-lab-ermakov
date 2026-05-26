@@ -123,7 +123,7 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	neo4jUser, err := requiredString("NEO4J_USER")
+	neo4jUser, err := requiredString("NEO4J_USERNAME")
 	if err != nil {
 		return Config{}, err
 	}
