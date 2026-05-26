@@ -17,12 +17,14 @@ import (
 
 // EventService implements event business logic.
 type EventService struct {
-	events      repository.EventRepository
-	users       repository.UserRepository
-	reactions   repository.EventReactionRepository
-	cache       repository.EventReactionCache
-	reviews     repository.EventReviewRepository
-	reviewCache repository.EventReviewCache
+	events              repository.EventRepository
+	users               repository.UserRepository
+	reactions           repository.EventReactionRepository
+	cache               repository.EventReactionCache
+	reviews             repository.EventReviewRepository
+	reviewCache         repository.EventReviewCache
+	recommendationGraph repository.RecommendationGraphRepository
+	recommendationCache repository.RecommendationCache
 }
 
 // NewEventService creates a new EventService.
@@ -49,6 +51,15 @@ func (s *EventService) SetReviewsStorage(
 ) {
 	s.reviews = reviews
 	s.reviewCache = cache
+}
+
+// SetRecommendationsStorage configures recommendation graph and cache dependencies.
+func (s *EventService) SetRecommendationsStorage(
+	graph repository.RecommendationGraphRepository,
+	cache repository.RecommendationCache,
+) {
+	s.recommendationGraph = graph
+	s.recommendationCache = cache
 }
 
 // CreateEventInput is input data for event creation.
@@ -227,6 +238,11 @@ func (s *EventService) Create(ctx context.Context, input CreateEventInput, now t
 
 		return model.Event{}, "", fmt.Errorf("create event: %w", err)
 	}
+	if s.recommendationGraph != nil {
+		if graphErr := s.recommendationGraph.UpsertEvent(ctx, event.ID, event.Title, event.StartedAt); graphErr != nil {
+			return model.Event{}, "", fmt.Errorf("create recommendation event node: %w", graphErr)
+		}
+	}
 
 	return event, "", nil
 }
@@ -287,6 +303,11 @@ func (s *EventService) PutReaction(
 	if err := s.reactions.Put(ctx, strings.TrimSpace(eventID), strings.TrimSpace(userID), value, now); err != nil {
 		return fmt.Errorf("save reaction: %w", err)
 	}
+	if value == model.ReactionLike && s.recommendationGraph != nil {
+		if err := s.recommendationGraph.UpsertLike(ctx, strings.TrimSpace(userID), strings.TrimSpace(eventID)); err != nil {
+			return fmt.Errorf("save recommendation like edge: %w", err)
+		}
+	}
 	if err := s.cache.DeleteByTitle(ctx, event.Title); err != nil {
 		return fmt.Errorf("invalidate reactions cache: %w", err)
 	}
@@ -295,6 +316,51 @@ func (s *EventService) PutReaction(
 	}
 
 	return nil
+}
+
+// ListRecommendations returns recommendations for the user with cache-aside strategy.
+func (s *EventService) ListRecommendations(ctx context.Context, userID string) ([]model.Event, error) {
+	if s.recommendationGraph == nil || s.recommendationCache == nil {
+		return nil, fmt.Errorf("recommendation storage is not configured")
+	}
+
+	trimmedUserID := strings.TrimSpace(userID)
+	if trimmedUserID == "" {
+		return nil, ErrInvalidField
+	}
+
+	cachedEvents, found, err := s.recommendationCache.GetByUserID(ctx, trimmedUserID)
+	if err != nil {
+		return nil, fmt.Errorf("read recommendations cache: %w", err)
+	}
+	if found {
+		return cachedEvents, nil
+	}
+
+	recommendedIDs, err := s.recommendationGraph.ListRecommendedEventIDs(ctx, trimmedUserID)
+	if err != nil {
+		return nil, fmt.Errorf("load recommendation ids: %w", err)
+	}
+
+	recommendedEvents := make([]model.Event, 0, len(recommendedIDs))
+	for _, eventID := range recommendedIDs {
+		event, eventErr := s.events.GetByID(ctx, eventID)
+		if eventErr != nil {
+			if errors.Is(eventErr, repository.ErrNotFound) {
+				continue
+			}
+
+			return nil, fmt.Errorf("get recommended event by id: %w", eventErr)
+		}
+
+		recommendedEvents = append(recommendedEvents, event)
+	}
+
+	if err := s.recommendationCache.SetByUserID(ctx, trimmedUserID, recommendedEvents); err != nil {
+		return nil, fmt.Errorf("write recommendations cache: %w", err)
+	}
+
+	return recommendedEvents, nil
 }
 
 // BuildReactionsByTitle returns aggregated reactions for event titles from input list.

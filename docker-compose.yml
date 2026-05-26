@@ -10,6 +10,8 @@ services:
     depends_on:
       redis:
         condition: service_started
+      neo4j:
+        condition: service_healthy
       cassandra-init:
         condition: service_completed_successfully
       mongo-cluster-init:
@@ -21,6 +23,24 @@ services:
     command: ["redis-server", "--appendonly", "no", "--port", "${REDIS_PORT}"]
     ports:
       - "${REDIS_PORT}:${REDIS_PORT}"
+
+  neo4j:
+    image: neo4j:5-community
+    env_file:
+      - .env.local
+    environment:
+      NEO4J_AUTH: "${NEO4J_USER}/${NEO4J_PASSWORD}"
+    ports:
+      - "${NEO4J_HTTP_PORT}:${NEO4J_HTTP_PORT}"
+      - "${NEO4J_BOLT_PORT}:${NEO4J_BOLT_PORT}"
+    mem_limit: "1g"
+    mem_reservation: "512m"
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -a bolt://localhost:${NEO4J_BOLT_PORT} -u ${NEO4J_USER} -p ${NEO4J_PASSWORD} \"RETURN 1;\""]
+      interval: 20s
+      timeout: 10s
+      retries: 12
+      start_period: 40s
 
   cassandra:
     image: cassandra:latest

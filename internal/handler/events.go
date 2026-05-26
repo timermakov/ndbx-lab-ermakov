@@ -185,6 +185,41 @@ func (h *EventsHandler) List(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Recommendations handles GET /recommendations.
+func (h *EventsHandler) Recommendations(w http.ResponseWriter, r *http.Request) {
+	sessionID, sessionData, ok, err := h.requireSession(r)
+	if err != nil {
+		log.Printf("events recommendations session check: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	if !ok || sessionData.UserID == "" {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
+	recommendedEvents, recommendationsErr := h.events.ListRecommendations(r.Context(), sessionData.UserID)
+	if recommendationsErr != nil {
+		log.Printf("events recommendations: %v", recommendationsErr)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	if _, touchErr := h.sessions.Touch(r.Context(), sessionID, time.Now()); touchErr != nil {
+		log.Printf("events recommendations touch session: %v", touchErr)
+	}
+	setSessionCookieWithMaxAge(w, sessionID, h.ttlSeconds)
+
+	responseEvents := make([]any, 0, len(recommendedEvents))
+	for _, event := range recommendedEvents {
+		responseEvents = append(responseEvents, eventToResponse(event, nil, nil))
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"events": responseEvents,
+	})
+}
+
 // GetByID handles GET /events/{id}.
 func (h *EventsHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	eventID := strings.TrimSpace(r.PathValue("id"))
