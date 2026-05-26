@@ -304,6 +304,9 @@ func (s *EventService) PutReaction(
 		return fmt.Errorf("save reaction: %w", err)
 	}
 	if value == model.ReactionLike && s.recommendationGraph != nil {
+		if err := s.recommendationGraph.UpsertEvent(ctx, event.ID, event.Title, event.StartedAt); err != nil {
+			return fmt.Errorf("upsert recommendation event node: %w", err)
+		}
 		if err := s.recommendationGraph.UpsertLike(ctx, strings.TrimSpace(userID), strings.TrimSpace(eventID)); err != nil {
 			return fmt.Errorf("save recommendation like edge: %w", err)
 		}

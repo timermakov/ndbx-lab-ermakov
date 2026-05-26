@@ -198,6 +198,66 @@ type eventReviewCacheStub struct {
 	deleteByTitleFn func(ctx context.Context, title string) error
 }
 
+type recommendationGraphStub struct {
+	upsertUserFn            func(ctx context.Context, userID string) error
+	upsertEventFn           func(ctx context.Context, eventID, title, startedAt string) error
+	upsertLikeFn            func(ctx context.Context, userID, eventID string) error
+	listRecommendedEventIDs func(ctx context.Context, userID string) ([]string, error)
+}
+
+func (s recommendationGraphStub) UpsertUser(ctx context.Context, userID string) error {
+	if s.upsertUserFn != nil {
+		return s.upsertUserFn(ctx, userID)
+	}
+
+	return nil
+}
+
+func (s recommendationGraphStub) UpsertEvent(ctx context.Context, eventID, title, startedAt string) error {
+	if s.upsertEventFn != nil {
+		return s.upsertEventFn(ctx, eventID, title, startedAt)
+	}
+
+	return nil
+}
+
+func (s recommendationGraphStub) UpsertLike(ctx context.Context, userID, eventID string) error {
+	if s.upsertLikeFn != nil {
+		return s.upsertLikeFn(ctx, userID, eventID)
+	}
+
+	return nil
+}
+
+func (s recommendationGraphStub) ListRecommendedEventIDs(ctx context.Context, userID string) ([]string, error) {
+	if s.listRecommendedEventIDs != nil {
+		return s.listRecommendedEventIDs(ctx, userID)
+	}
+
+	return []string{}, nil
+}
+
+type recommendationCacheStub struct {
+	getByUserIDFn func(ctx context.Context, userID string) ([]model.Event, bool, error)
+	setByUserIDFn func(ctx context.Context, userID string, events []model.Event) error
+}
+
+func (s recommendationCacheStub) GetByUserID(ctx context.Context, userID string) ([]model.Event, bool, error) {
+	if s.getByUserIDFn != nil {
+		return s.getByUserIDFn(ctx, userID)
+	}
+
+	return nil, false, nil
+}
+
+func (s recommendationCacheStub) SetByUserID(ctx context.Context, userID string, events []model.Event) error {
+	if s.setByUserIDFn != nil {
+		return s.setByUserIDFn(ctx, userID, events)
+	}
+
+	return nil
+}
+
 func (s eventReviewCacheStub) GetByTitle(ctx context.Context, title string) (model.EventReviewsSummary, bool, error) {
 	if s.getByTitleFn != nil {
 		return s.getByTitleFn(ctx, title)
@@ -486,6 +546,115 @@ func TestEventServiceBuildReviewsByTitle(t *testing.T) {
 	reviews := reviewsByTitle["The Event"]
 	if reviews.Count != 3 || reviews.Rating != 3 {
 		t.Fatalf("unexpected reviews result: %+v", reviews)
+	}
+}
+
+func TestEventServicePutReactionLikeUpdatesRecommendationGraph(t *testing.T) {
+	t.Parallel()
+
+	var upsertEventCalled bool
+	var upsertLikeCalled bool
+
+	svc := service.NewEventService(eventRepoStub{
+		getByIDFn: func(context.Context, string) (model.Event, error) {
+			return model.Event{
+				ID:        "event-1",
+				Title:     "The Event",
+				StartedAt: "2026-03-24T10:00:00Z",
+			}, nil
+		},
+	}, eventUserRepoStub{})
+	svc.SetReactionsStorage(eventReactionRepoStub{}, eventReactionCacheStub{})
+	svc.SetRecommendationsStorage(
+		recommendationGraphStub{
+			upsertEventFn: func(_ context.Context, eventID, title, startedAt string) error {
+				upsertEventCalled = true
+				if eventID != "event-1" || title != "The Event" || startedAt != "2026-03-24T10:00:00Z" {
+					t.Fatalf("unexpected upsert event args: %q %q %q", eventID, title, startedAt)
+				}
+
+				return nil
+			},
+			upsertLikeFn: func(_ context.Context, userID, eventID string) error {
+				upsertLikeCalled = true
+				if userID != "user-1" || eventID != "event-1" {
+					t.Fatalf("unexpected upsert like args: %q %q", userID, eventID)
+				}
+
+				return nil
+			},
+		},
+		recommendationCacheStub{},
+	)
+
+	if err := svc.PutReaction(context.Background(), "event-1", "user-1", model.ReactionLike, time.Now()); err != nil {
+		t.Fatalf("put reaction failed: %v", err)
+	}
+	if !upsertEventCalled {
+		t.Fatalf("expected recommendation upsert event call")
+	}
+	if !upsertLikeCalled {
+		t.Fatalf("expected recommendation upsert like call")
+	}
+}
+
+func TestEventServiceListRecommendationsCacheMiss(t *testing.T) {
+	t.Parallel()
+
+	var cacheSetCalled bool
+	svc := service.NewEventService(eventRepoStub{
+		getByIDFn: func(_ context.Context, id string) (model.Event, error) {
+			switch id {
+			case "event-2":
+				return model.Event{ID: "event-2", Title: "Title 2"}, nil
+			case "event-4":
+				return model.Event{ID: "event-4", Title: "Title 4"}, nil
+			default:
+				return model.Event{}, repository.ErrNotFound
+			}
+		},
+	}, eventUserRepoStub{})
+	svc.SetRecommendationsStorage(
+		recommendationGraphStub{
+			listRecommendedEventIDs: func(_ context.Context, userID string) ([]string, error) {
+				if userID != "user-1" {
+					t.Fatalf("unexpected user id %q", userID)
+				}
+
+				return []string{"event-2", "event-4"}, nil
+			},
+		},
+		recommendationCacheStub{
+			getByUserIDFn: func(_ context.Context, userID string) ([]model.Event, bool, error) {
+				if userID != "user-1" {
+					t.Fatalf("unexpected cache user id %q", userID)
+				}
+
+				return nil, false, nil
+			},
+			setByUserIDFn: func(_ context.Context, userID string, events []model.Event) error {
+				cacheSetCalled = true
+				if userID != "user-1" {
+					t.Fatalf("unexpected cache set user id %q", userID)
+				}
+				if len(events) != 2 {
+					t.Fatalf("unexpected recommendations count %d", len(events))
+				}
+
+				return nil
+			},
+		},
+	)
+
+	events, err := svc.ListRecommendations(context.Background(), "user-1")
+	if err != nil {
+		t.Fatalf("list recommendations failed: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("unexpected recommendations result count %d", len(events))
+	}
+	if !cacheSetCalled {
+		t.Fatalf("expected cache set call")
 	}
 }
 
