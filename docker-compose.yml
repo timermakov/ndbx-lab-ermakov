@@ -26,8 +26,6 @@ services:
 
   neo4j:
     image: neo4j:5-community
-    env_file:
-      - .env.local
     environment:
       NEO4J_AUTH: "${NEO4J_USERNAME}/${NEO4J_PASSWORD}"
     ports:
