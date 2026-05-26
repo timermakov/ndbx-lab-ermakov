@@ -14,6 +14,7 @@ type Config struct {
 	AppUserSessionTTL    int
 	AppLikeTTL           int
 	AppEventReviewsTTL   int
+	AppRecommendationsTTL int
 	RedisHost            string
 	RedisPort            string
 	RedisPassword        string
@@ -29,6 +30,9 @@ type Config struct {
 	CassandraPassword    string
 	CassandraKeyspace    string
 	CassandraConsistency string
+	Neo4jURL             string
+	Neo4jUser            string
+	Neo4jPassword        string
 }
 
 // Load reads and validates configuration from environment variables.
@@ -42,6 +46,10 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	appEventReviewsTTL, err := requiredInt("APP_EVENT_REVIEWS_TTL")
+	if err != nil {
+		return Config{}, err
+	}
+	appRecommendationsTTL, err := requiredInt("APP_RECOMMENDATIONS_TTL")
 	if err != nil {
 		return Config{}, err
 	}
@@ -111,6 +119,18 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	neo4jURL, err := requiredString("NEO4J_URL")
+	if err != nil {
+		return Config{}, err
+	}
+	neo4jUser, err := requiredString("NEO4J_USER")
+	if err != nil {
+		return Config{}, err
+	}
+	neo4jPassword, err := requiredString("NEO4J_PASSWORD")
+	if err != nil {
+		return Config{}, err
+	}
 
 	return Config{
 		AppHost:              appHost,
@@ -118,6 +138,7 @@ func Load() (Config, error) {
 		AppUserSessionTTL:    appTTL,
 		AppLikeTTL:           appLikeTTL,
 		AppEventReviewsTTL:   appEventReviewsTTL,
+		AppRecommendationsTTL: appRecommendationsTTL,
 		RedisHost:            redisHost,
 		RedisPort:            redisPort,
 		RedisPassword:        optionalString("REDIS_PASSWORD"),
@@ -133,6 +154,9 @@ func Load() (Config, error) {
 		CassandraPassword:    optionalString("CASSANDRA_PASSWORD"),
 		CassandraKeyspace:    cassandraKeyspace,
 		CassandraConsistency: cassandraConsistency,
+		Neo4jURL:             neo4jURL,
+		Neo4jUser:            neo4jUser,
+		Neo4jPassword:        neo4jPassword,
 	}, nil
 }
 
