@@ -17,6 +17,30 @@ type userRepoStub struct {
 	listFn          func(ctx context.Context, filter repository.UserFilter) ([]model.User, error)
 }
 
+type userRecommendationGraphStub struct {
+	upsertUserFn func(ctx context.Context, userID string) error
+}
+
+func (s userRecommendationGraphStub) UpsertUser(ctx context.Context, userID string) error {
+	if s.upsertUserFn != nil {
+		return s.upsertUserFn(ctx, userID)
+	}
+
+	return nil
+}
+
+func (s userRecommendationGraphStub) UpsertEvent(context.Context, string, string, string) error {
+	return nil
+}
+
+func (s userRecommendationGraphStub) UpsertLike(context.Context, string, string) error {
+	return nil
+}
+
+func (s userRecommendationGraphStub) ListRecommendedEventIDs(context.Context, string) ([]string, error) {
+	return []string{}, nil
+}
+
 func (s userRepoStub) EnsureIndexes(context.Context) error {
 	return nil
 }
@@ -99,5 +123,42 @@ func TestUserServiceLoginInvalidCredentials(t *testing.T) {
 	_, _, err := svc.Login(context.Background(), "john", "wrong")
 	if !errors.Is(err, service.ErrInvalidCredentials) {
 		t.Fatalf("expected ErrInvalidCredentials, got %v", err)
+	}
+}
+
+func TestUserServiceRegisterSyncsRecommendationGraph(t *testing.T) {
+	t.Parallel()
+
+	var graphCalled bool
+	svc := service.NewUserService(userRepoStub{
+		createFn: func(_ context.Context, user model.User) (model.User, error) {
+			return model.User{
+				ID:       "user-1",
+				FullName: user.FullName,
+				Username: user.Username,
+			}, nil
+		},
+	})
+	svc.SetRecommendationGraph(userRecommendationGraphStub{
+		upsertUserFn: func(_ context.Context, userID string) error {
+			graphCalled = true
+			if userID != "user-1" {
+				t.Fatalf("unexpected graph user id %q", userID)
+			}
+
+			return nil
+		},
+	})
+
+	_, _, err := svc.Register(context.Background(), service.RegisterInput{
+		FullName: "John Doe",
+		Username: "john",
+		Password: "secret",
+	})
+	if err != nil {
+		t.Fatalf("register failed: %v", err)
+	}
+	if !graphCalled {
+		t.Fatalf("expected recommendation graph upsert call")
 	}
 }

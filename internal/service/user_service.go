@@ -17,11 +17,17 @@ import (
 // UserService implements user registration and authentication logic.
 type UserService struct {
 	users repository.UserRepository
+	graph repository.RecommendationGraphRepository
 }
 
 // NewUserService creates a new UserService.
 func NewUserService(users repository.UserRepository) *UserService {
 	return &UserService{users: users}
+}
+
+// SetRecommendationGraph configures recommendation graph repository dependency.
+func (s *UserService) SetRecommendationGraph(graph repository.RecommendationGraphRepository) {
+	s.graph = graph
 }
 
 // RegisterInput contains fields for user registration.
@@ -67,6 +73,11 @@ func (s *UserService) Register(ctx context.Context, input RegisterInput) (model.
 		}
 
 		return model.User{}, "", fmt.Errorf("create user: %w", err)
+	}
+	if s.graph != nil {
+		if graphErr := s.graph.UpsertUser(ctx, user.ID); graphErr != nil {
+			return model.User{}, "", fmt.Errorf("create recommendation user node: %w", graphErr)
+		}
 	}
 
 	return user, "", nil

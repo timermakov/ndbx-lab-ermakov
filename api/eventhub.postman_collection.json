@@ -8,6 +8,30 @@
 		{
 			"key": "base_url",
 			"value": "http://localhost:8080"
+		},
+		{
+			"key": "session_id",
+			"value": ""
+		},
+		{
+			"key": "username",
+			"value": "demo.user"
+		},
+		{
+			"key": "password",
+			"value": "demo-password"
+		},
+		{
+			"key": "user_id",
+			"value": ""
+		},
+		{
+			"key": "event_id",
+			"value": ""
+		},
+		{
+			"key": "review_id",
+			"value": ""
 		}
 	],
 	"item": [
@@ -40,6 +64,587 @@
 							"body": "{\"status\":\"ok\"}"
 						}
 					]
+				}
+			]
+		},
+		{
+			"name": "Session",
+			"item": [
+				{
+					"name": "Create or Refresh Session",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/session",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"session"
+							]
+						},
+						"description": "Creates anonymous session or refreshes existing one. Saves X-Session-Id from Set-Cookie into {{session_id}}."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"const rawSetCookie = pm.response.headers.get('Set-Cookie');",
+									"if (rawSetCookie) {",
+									"  const match = rawSetCookie.match(/X-Session-Id=([^;]+)/);",
+									"  if (match && match[1]) {",
+									"    pm.collectionVariables.set('session_id', match[1]);",
+									"  }",
+									"}"
+								]
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "Users",
+			"item": [
+				{
+					"name": "Register User",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"full_name\": \"Demo User\",\n  \"username\": \"{{username}}\",\n  \"password\": \"{{password}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/users",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"users"
+							]
+						},
+						"description": "Registers new user and creates authenticated session."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"const rawSetCookie = pm.response.headers.get('Set-Cookie');",
+									"if (rawSetCookie) {",
+									"  const match = rawSetCookie.match(/X-Session-Id=([^;]+)/);",
+									"  if (match && match[1]) {",
+									"    pm.collectionVariables.set('session_id', match[1]);",
+									"  }",
+									"}"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "List Users",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/users?name=demo&limit=10&offset=0",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"users"
+							],
+							"query": [
+								{
+									"key": "name",
+									"value": "demo"
+								},
+								{
+									"key": "limit",
+									"value": "10"
+								},
+								{
+									"key": "offset",
+									"value": "0"
+								}
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"const json = pm.response.json();",
+									"if (json && Array.isArray(json.users) && json.users.length > 0 && json.users[0].id) {",
+									"  pm.collectionVariables.set('user_id', json.users[0].id);",
+									"}"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Get User By ID",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/users/{{user_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"users",
+								"{{user_id}}"
+							]
+						}
+					}
+				},
+				{
+					"name": "List User Events",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/users/{{user_id}}/events?include=reactions,reviews&limit=10&offset=0",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"users",
+								"{{user_id}}",
+								"events"
+							],
+							"query": [
+								{
+									"key": "include",
+									"value": "reactions,reviews"
+								},
+								{
+									"key": "limit",
+									"value": "10"
+								},
+								{
+									"key": "offset",
+									"value": "0"
+								}
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Auth",
+			"item": [
+				{
+					"name": "Login",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"username\": \"{{username}}\",\n  \"password\": \"{{password}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/login",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"auth",
+								"login"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"const rawSetCookie = pm.response.headers.get('Set-Cookie');",
+									"if (rawSetCookie) {",
+									"  const match = rawSetCookie.match(/X-Session-Id=([^;]+)/);",
+									"  if (match && match[1]) {",
+									"    pm.collectionVariables.set('session_id', match[1]);",
+									"  }",
+									"}"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Logout",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Cookie",
+								"value": "X-Session-Id={{session_id}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/auth/logout",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"auth",
+								"logout"
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Events",
+			"item": [
+				{
+					"name": "Create Event",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Cookie",
+								"value": "X-Session-Id={{session_id}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"title\": \"NDBX Meetup\",\n  \"address\": \"Nevsky Prospect 1\",\n  \"started_at\": \"2026-06-01T18:00:00Z\",\n  \"finished_at\": \"2026-06-01T20:00:00Z\",\n  \"description\": \"Community meetup\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/events",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"events"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"const json = pm.response.json();",
+									"if (json && json.id) {",
+									"  pm.collectionVariables.set('event_id', json.id);",
+									"}"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "List Events",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/events?include=reactions,reviews&limit=10&offset=0",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"events"
+							],
+							"query": [
+								{
+									"key": "include",
+									"value": "reactions,reviews"
+								},
+								{
+									"key": "limit",
+									"value": "10"
+								},
+								{
+									"key": "offset",
+									"value": "0"
+								}
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"const json = pm.response.json();",
+									"if (json && Array.isArray(json.events) && json.events.length > 0 && json.events[0].id) {",
+									"  pm.collectionVariables.set('event_id', json.events[0].id);",
+									"}"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Get Event By ID",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/events/{{event_id}}?include=reactions,reviews",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"events",
+								"{{event_id}}"
+							],
+							"query": [
+								{
+									"key": "include",
+									"value": "reactions,reviews"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Patch Event",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Cookie",
+								"value": "X-Session-Id={{session_id}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"category\": \"meetup\",\n  \"price\": 500,\n  \"city\": \"Saint Petersburg\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/events/{{event_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"events",
+								"{{event_id}}"
+							]
+						}
+					}
+				},
+				{
+					"name": "Like Event",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Cookie",
+								"value": "X-Session-Id={{session_id}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/events/{{event_id}}/like",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"events",
+								"{{event_id}}",
+								"like"
+							]
+						}
+					}
+				},
+				{
+					"name": "Dislike Event",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Cookie",
+								"value": "X-Session-Id={{session_id}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/events/{{event_id}}/dislike",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"events",
+								"{{event_id}}",
+								"dislike"
+							]
+						}
+					}
+				},
+				{
+					"name": "Create Event Review",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Cookie",
+								"value": "X-Session-Id={{session_id}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"comment\": \"Great event\",\n  \"rating\": 5\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/events/{{event_id}}/reviews",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"events",
+								"{{event_id}}",
+								"reviews"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"const json = pm.response.json();",
+									"if (json && json.id) {",
+									"  pm.collectionVariables.set('review_id', json.id);",
+									"}"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "List Event Reviews",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/events/{{event_id}}/reviews?limit=10&offset=0",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"events",
+								"{{event_id}}",
+								"reviews"
+							],
+							"query": [
+								{
+									"key": "limit",
+									"value": "10"
+								},
+								{
+									"key": "offset",
+									"value": "0"
+								}
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"const json = pm.response.json();",
+									"if (json && Array.isArray(json.reviews) && json.reviews.length > 0 && json.reviews[0].id) {",
+									"  pm.collectionVariables.set('review_id', json.reviews[0].id);",
+									"}"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Patch Event Review",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Cookie",
+								"value": "X-Session-Id={{session_id}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"comment\": \"Updated review\",\n  \"rating\": 4\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/events/{{event_id}}/reviews/{{review_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"events",
+								"{{event_id}}",
+								"reviews",
+								"{{review_id}}"
+							]
+						}
+					}
+				},
+				{
+					"name": "Get Recommendations",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Cookie",
+								"value": "X-Session-Id={{session_id}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/recommendations",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"recommendations"
+							]
+						}
+					}
 				}
 			]
 		}

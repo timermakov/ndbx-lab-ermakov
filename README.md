@@ -46,3 +46,7 @@ Backend-сервис платформы мероприятий для практ
 ## Помощь
 
 Возникли вопросы? → [@sitnikovik](https://t.me/sitnikovik)
+
+## Документация проекта
+
+- [PROJECT_DOCUMENTATION.md](docs/PROJECT_DOCUMENTATION.md) — архитектура, карта NoSQL-хранилищ, маршруты API, работа через `Makefile`, использование Postman-коллекции.

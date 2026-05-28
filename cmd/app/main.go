@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/gocql/gocql"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/redis/go-redis/v9"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -77,6 +78,21 @@ func main() {
 	if err := waitForMongo(mongoClient, 30, time.Second); err != nil {
 		logger.Fatalf("mongo ping failed: %v", err)
 	}
+	neo4jDriver, err := neo4j.NewDriverWithContext(
+		cfg.Neo4jURL,
+		neo4j.BasicAuth(cfg.Neo4jUser, cfg.Neo4jPassword, ""),
+	)
+	if err != nil {
+		logger.Fatalf("neo4j connect failed: %v", err)
+	}
+	defer func() {
+		if closeErr := neo4jDriver.Close(context.Background()); closeErr != nil {
+			logger.Printf("neo4j close failed: %v", closeErr)
+		}
+	}()
+	if err := waitForNeo4j(neo4jDriver, 30, time.Second); err != nil {
+		logger.Fatalf("neo4j ping failed: %v", err)
+	}
 
 	cassandraSession, err := createCassandraSession(cfg, cfg.CassandraKeyspace)
 	if err != nil {
@@ -92,6 +108,11 @@ func main() {
 	eventRepo := repository.NewMongoEventRepository(mongoDB)
 	reactionCache := repository.NewRedisEventReactionCache(redisClient, time.Duration(cfg.AppLikeTTL)*time.Second)
 	reviewCache := repository.NewRedisEventReviewCache(redisClient, time.Duration(cfg.AppEventReviewsTTL)*time.Second)
+	recommendationGraphRepo := repository.NewNeo4jRecommendationRepository(neo4jDriver)
+	recommendationCache := repository.NewRedisRecommendationCache(
+		redisClient,
+		time.Duration(cfg.AppRecommendationsTTL)*time.Second,
+	)
 
 	indexCtx, indexCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer indexCancel()
@@ -104,9 +125,11 @@ func main() {
 
 	store := session.NewRedisStore(redisClient, time.Duration(cfg.AppUserSessionTTL)*time.Second)
 	userService := service.NewUserService(userRepo)
+	userService.SetRecommendationGraph(recommendationGraphRepo)
 	eventService := service.NewEventService(eventRepo, userRepo)
 	eventService.SetReactionsStorage(reactionRepo, reactionCache)
 	eventService.SetReviewsStorage(reviewRepo, reviewCache)
+	eventService.SetRecommendationsStorage(recommendationGraphRepo, recommendationCache)
 
 	usersHandler := handler.NewUsersHandler(userService, eventService, store, cfg.AppUserSessionTTL)
 	authHandler := handler.NewAuthHandler(userService, store, cfg.AppUserSessionTTL)
@@ -124,6 +147,7 @@ func main() {
 	mux.HandleFunc("POST /events", eventsHandler.Create)
 	mux.HandleFunc("GET /events", eventsHandler.List)
 	mux.HandleFunc("GET /events/{id}", eventsHandler.GetByID)
+	mux.HandleFunc("GET /recommendations", eventsHandler.Recommendations)
 	mux.HandleFunc("POST /events/{id}/like", eventsHandler.Like)
 	mux.HandleFunc("POST /events/{id}/dislike", eventsHandler.Dislike)
 	mux.HandleFunc("POST /events/{id}/reviews", eventsHandler.CreateReview)
@@ -213,6 +237,23 @@ func waitForMongo(client *mongo.Client, attempts int, delay time.Duration) error
 	}
 
 	return fmt.Errorf("mongo not ready after %d attempts: %w", attempts, lastErr)
+}
+
+func waitForNeo4j(driver neo4j.DriverWithContext, attempts int, delay time.Duration) error {
+	var lastErr error
+
+	for i := 0; i < attempts; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		lastErr = driver.VerifyConnectivity(ctx)
+		cancel()
+		if lastErr == nil {
+			return nil
+		}
+
+		time.Sleep(delay)
+	}
+
+	return fmt.Errorf("neo4j not ready after %d attempts: %w", attempts, lastErr)
 }
 
 func createCassandraSession(cfg config.Config, keyspace string) (*gocql.Session, error) {
